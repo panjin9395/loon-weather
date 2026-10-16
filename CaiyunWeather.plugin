@@ -1,16 +1,16 @@
 #!name=彩云天气定位与手动测试
-#!desc=location-v2 + weather-v1：每天07:30、12:00、17:00、20:30播报实时天气和短时趋势；预警需API权限。坐标本地保存，不能区分当前位置与收藏城市。
+#!desc=location-v2 + weather-v2：每天07:30、12:00、17:00、20:30播报实时天气和短时趋势；地图失败不阻断天气；不显示街道。预警需API权限。坐标本地保存，不能区分当前位置与收藏城市。
 #!author=local-config
 #!homepage=https://github.com/panjin9395/loon-weather
 
 [Script]
 http-request ^https:\/\/(weather-data\.apple|weatherkit\.apple|api\.weather)\.com\/ script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-location-v2.js, requires-body=false, timeout=20, tag=彩云天气定位
 generic script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-location-v2.js, timeout=20, tag=彩云定位诊断
-generic script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-weather-v1.js, timeout=60, tag=彩云天气手动测试
+generic script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-weather-v2.js, timeout=60, tag=彩云天气手动测试
 
 # 每天四次；当前播报实时天气及短时趋势，尚非独立明日预报。
-cron "30 7,20 * * *" script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-weather-v1.js, timeout=60, tag=彩云天气早晚播报
-cron "0 12,17 * * *" script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-weather-v1.js, timeout=60, tag=彩云天气午后播报
+cron "30 7,20 * * *" script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-weather-v2.js, timeout=60, tag=彩云天气早晚播报
+cron "0 12,17 * * *" script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-weather-v2.js, timeout=60, tag=彩云天气午后播报
 
 [MITM]
 hostname = weather-data.apple.com, api.weather.com, weatherkit.apple.com
