@@ -1,10 +1,11 @@
 #!name=彩云天气定位与手动测试
-#!desc=使用 Peng-YM 彩云脚本与 BoxJS 本地设置。先验证定位和手动通知，暂不开定时。需要彩云及腾讯地图密钥，仅在 BoxJS 中填写。苹果天气新接口兼容性需实测。
+#!desc=location-v1：独立定位修正版；校验并回读BoxJS坐标，保留密钥，日志不显示位置。先验证定位，暂不开定时；不能区分苹果天气的当前位置与收藏城市。
 #!author=local-config
-#!homepage=https://github.com/chiupam/tutorial/blob/master/caiyun/README.md
+#!homepage=https://github.com/panjin9395/loon-weather
 
 [Script]
-http-request ^https:\/\/(weather-data\.apple|weatherkit\.apple|api\.weather)\.com\/ script-path=https://raw.githubusercontent.com/Peng-YM/QuanX/master/Tasks/caiyun.js, requires-body=false, timeout=20, tag=彩云天气定位
+http-request ^https:\/\/(weather-data\.apple|weatherkit\.apple|api\.weather)\.com\/ script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-location-v1.js, requires-body=false, timeout=20, tag=彩云天气定位
+generic script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-location-v1.js, timeout=20, tag=彩云定位诊断
 generic script-path=https://raw.githubusercontent.com/Peng-YM/QuanX/master/Tasks/caiyun.js, timeout=60, tag=彩云天气手动测试
 
 [MITM]
