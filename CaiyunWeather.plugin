@@ -1,5 +1,5 @@
 #!name=彩云天气定位与手动测试
-#!desc=本地定位3km锚点与可信时间。07:30出门、17:00回家、20:30明日温差；12:00仅新增/更新有效官方预警，无变化安静。手动为预览不吞正式预警。缺权限明确降级；不是实时监控。
+#!desc=2026.10-budget.1：每天24基础slot+最多3次手动/条件机动。07:30出门、12预警更新、17返程、20:30明日；其他无变化安静。3km本地定位，预算为本地估算，非实时监控。
 #!author=local-config
 #!homepage=https://github.com/panjin9395/loon-weather
 
@@ -8,11 +8,13 @@ http-request ^https:\/\/(weather-data\.apple|weatherkit\.apple|api\.weather)\.co
 generic script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-location-v2.js, timeout=20, tag=彩云定位诊断
 generic script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-weather-v2.js, timeout=60, tag=彩云天气手动测试
 
-# 仍每天四个时刻，cron 按设备/Loon 时区；中国用户保持设备 Asia/Shanghai。
-cron "30 7 * * *" script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-weather-v2.js, argument="scene=morning", timeout=60, tag=彩云天气出门摘要
-cron "0 12 * * *" script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-weather-v2.js, argument="scene=noon", timeout=60, tag=彩云天气午间变化
-cron "0 17 * * *" script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-weather-v2.js, argument="scene=evening", timeout=60, tag=彩云天气回家出行
-cron "30 20 * * *" script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-weather-v2.js, argument="scene=night", timeout=60, tag=彩云天气明日预报
+# 每天24个基础slot，场景在同一次请求内分派，不另建四场景cron。
+# cron 按设备/Loon 时区；保持设备 Asia/Shanghai。
+cron "30 6-21 * * *" script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-weather-v2.js, argument="mode=base", timeout=60, tag=彩云天气半点基础检查
+cron "0 7,8,9,12,16,17,18,20 * * *" script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-weather-v2.js, argument="mode=base", timeout=60, tag=彩云天气整点基础检查
+
+# 仅上次有效降雨/预警仍在检查窗口才请求；与手动共用每日最多3次机动。
+cron "15,45 7-20 * * *" script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-weather-v2.js, argument="mode=extra", timeout=60, tag=彩云天气条件机动检查
 
 [MITM]
 hostname = weather-data.apple.com, api.weather.com, weatherkit.apple.com

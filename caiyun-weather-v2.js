@@ -1,4 +1,4 @@
-// Compatibility patch weather-v1. Based on Peng-YM caiyun.js; author credit retained.
+// Release 2026.10-budget.1. Based on Peng-YM caiyun.js; author credit retained.
 /**
 彩云天气 v0.1 alpha
 @author: Peng-YM
@@ -93,7 +93,7 @@ if (typeof $request !== "undefined") {
       throw new ERR.TokenError("❌ Token令牌 并不是 一个链接！");
     } else if (!$.read("location")) {
       // no location
-      if (typeof $argument === 'string' && $argument === 'scene=noon') return;
+      if (backgroundQuiet() || typeof $argument === 'string' && $argument === 'scene=noon') return;
       $.notify(
         "[彩云天气]",
         "❌ 未找到定位",
@@ -104,6 +104,7 @@ if (typeof $request !== "undefined") {
     }
   })()
     .catch((err) => {
+      if (backgroundQuiet()) return;
       if (typeof $argument === 'string' && /(?:^|&)scene=noon(?:&|$)/.test($argument) && !/(?:^|&)preview=1(?:&|$)/.test($argument)) return;
       const arg = typeof $argument === 'string' ? $argument : '';
       const manual = /(?:^|&)preview=1(?:&|$)/.test(arg) || !/(?:^|&)scene=(morning|noon|evening|night)(?:&|$)/.test(arg);
@@ -125,17 +126,122 @@ if (typeof $request !== "undefined") {
     .finally(() => $.done());
 }
 
+function backgroundQuiet() {
+  const a=typeof $argument === 'string' ? $argument : '';
+  return /(?:^|&)mode=(base|extra)(?:&|$)/.test(a) && !/(?:^|&)preview=1(?:&|$)/.test(a);
+}
+function baseSlots() {
+  return Array.from({length:16}, (_,i) => String(i+6).padStart(2,'0') + ':30')
+    .concat([7,8,9,12,16,17,18,20].map(h => String(h).padStart(2,'0') + ':00')).sort();
+}
+function budgetState() {
+  let state;
+  try { state = JSON.parse($.read('#caiyun_budget_v1') || '{}'); } catch (_) { state = {}; }
+  const date = shanghaiDate(Date.now());
+  if (!state.day || state.day.date !== date) state.day = {date, used:0, extra:0, slots:{}};
+  return state;
+}
+function saveBudget(state) {
+  const value=JSON.stringify(state);
+  $.write(value, '#caiyun_budget_v1');
+  return $.read('#caiyun_budget_v1') === value;
+}
+function quotaLimit(state) {
+  const q = $.read('quota');
+  if (q === undefined || q === null) return {cap:27, remaining:Infinity};
+  const date = x => typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x) &&
+    Number.isFinite(Date.parse(x+'T00:00:00+08:00')) && shanghaiDate(Date.parse(x+'T00:00:00+08:00')) === x;
+  const count = x => Number.isSafeInteger(x) && x >= 0;
+  let amount, expiry;
+  if (count(q.remaining) && date(q.expiry)) { amount=q.remaining; expiry=q.expiry; }
+  else if (count(q.total) && date(q.start) && !('remaining' in q)) {
+    if (q.start > state.day.date) return {cap:0,remaining:0};
+    amount=q.total; expiry=shanghaiDate(Date.parse(q.start+'T00:00:00+08:00') + 364*86400000);
+  } else return {cap:0,remaining:0};
+  const signature=JSON.stringify(q);
+  if (!state.quota || state.quota.signature !== signature) {
+    state.quota={signature, baseline:('remaining' in q ? state.attempts || 0 : 0)};
+  }
+  const remaining=Math.max(0,amount - ((state.attempts || 0) - state.quota.baseline));
+  const days=Math.round((Date.parse(expiry+'T00:00:00+08:00') - Date.parse(state.day.date+'T00:00:00+08:00'))/86400000)+1;
+  if (days <= 0 || !remaining) return {cap:0,remaining:0};
+  // Keep today's allocation stable as its attempts are debited; recompute tomorrow.
+  if (state.day.quotaSignature !== signature) {
+    state.day.quotaSignature=signature;
+    state.day.cap=Math.min(27,Math.floor((remaining + state.day.used)/days));
+  }
+  return {cap:state.day.cap,remaining};
+}
+function trustedSnapshot() {
+  const w=$.weather, r=w.result.realtime, now=Date.now();
+  const observed=typeof r.obsTime === 'string' && /T.*(?:Z|[+-]\d{2}:?\d{2})$/.test(r.obsTime) ? Date.parse(r.obsTime) : NaN;
+  if (r.status !== 'ok' || !Number.isFinite(r.temperature) || !Number.isFinite(observed) || now-observed>3600000 || observed-now>300000 ||
+    !Number.isFinite(w.server_time) || Math.abs(now-w.server_time*1000)>3600000) return null;
+  return {at:now,observed,temperature:r.temperature,rain:typeof r.skycon === 'string' && /RAIN|SNOW/.test(r.skycon)};
+}
+function rememberConditions(silent) {
+  const state=budgetState(), now=Date.now(), snap=trustedSnapshot();
+  const warnings=Number.isFinite($.weather.server_time) && Math.abs(now-$.weather.server_time*1000)<=3600000 ? activeWarnings(now) : null;
+  const old=state.condition;
+  const change=snap && old && now-old.at<=3*3600000 && (Math.abs(snap.temperature-old.temperature)>=5 || snap.rain!==old.rain);
+  if (snap) state.condition=snap;
+  const untils=(warnings || []).map(a=>Math.min(now+2*3600000,a.expiretimestamp ? a.expiretimestamp*1000 : now+2*3600000));
+  if (snap && snap.rain) untils.push(snap.observed+2*3600000);
+  state.hazardUntil=untils.length ? Math.max(...untils) : 0;
+  saveBudget(state);
+  return silent && change;
+}
+function reserveAttempt() {
+  const state = budgetState(), c = $.runContext;
+  const formal = !c.preview && c.mode !== 'extra';
+  const slot = formal && (c.mode === 'base' || c.scenes[c.time] === c.scene) ? c.time : null;
+  if (slot && state.day.slots[slot]) return false;
+  if (c.mode === 'extra' && (state.day.extraSlots || {})[c.time]) return false;
+  const limit = quotaLimit(state);
+  const futureScenes = Object.keys(c.scenes).filter(t => t >= c.time && !state.day.slots[t]);
+  const reserved = baseSlots().filter(t => t >= c.time && !state.day.slots[t]).length;
+  const priority = !!slot && !!c.scenes[slot];
+  const allowed = limit.remaining > 0 && state.day.used < limit.cap &&
+    (priority || formal && limit.cap - state.day.used > futureScenes.length ||
+      !formal && state.day.extra < 3 && limit.cap - state.day.used > reserved);
+  if (!allowed) {
+    if (c.preview) $.notify('[彩云天气 时间核验版]', '本地估算预算不足', '未请求天气；保留正式场景额度。本地估算不等于平台实际计费。');
+    return false;
+  }
+  if (slot) state.day.slots[slot] = true;
+  if (c.mode === 'extra') { state.day.extraSlots=state.day.extraSlots || {}; state.day.extraSlots[c.time]=true; }
+  if (!formal) state.day.extra++;
+  state.day.used++;
+  state.attempts = (state.attempts || 0) + 1;
+  if (!saveBudget(state)) return false;
+  $.budgetText = `本地估算：今日尝试${state.day.used}/${limit.cap}，机动${state.day.extra}/3；非平台计费次数`;
+  return true;
+}
+
 async function scheduler() {
   const now = new Date();
   $.log(
     `Scheduler activated at ${now.getMonth() + 1
     }月${now.getDate()}日${now.getHours()}时${now.getMinutes()}分`
   );
-  await query();
   const arg = typeof $argument === 'string' ? $argument : '';
   const scene = (arg.match(/(?:^|&)scene=(morning|noon|evening|night)(?:&|$)/) || [])[1];
-  const hour = new Date(Date.now() + 28800000).getUTCHours();
-  sceneWeather(scene || (hour < 12 ? 'morning' : hour < 17 ? 'noon' : hour < 20 ? 'evening' : 'night'), !scene);
+  const mode = (arg.match(/(?:^|&)mode=(base|extra)(?:&|$)/) || [])[1];
+  const time = new Date(Date.now() + 28800000).toISOString().slice(11,16);
+  const scenes = {'07:30':'morning','12:00':'noon','17:00':'evening','20:30':'night'};
+  const preview = /(?:^|&)preview=1(?:&|$)/.test(arg) || !mode && !scene;
+  $.runContext = {mode, scene, preview, time, scenes};
+  if (mode === 'base' && !preview && !baseSlots().includes(time)) return;
+  if (mode === 'extra' && (!['15','45'].includes(time.slice(3)) || time < '06:30' || time > '21:30' || !(budgetState().hazardUntil > Date.now()))) return;
+  if (!await query()) return;
+  const hour = Number(time.slice(0,2));
+  const silent = mode === 'extra' || mode === 'base' && !scenes[time];
+  const changed = !preview && rememberConditions(silent);
+  if (silent && !preview) {
+    sceneWeather('noon', false, changed);
+  } else if (mode === 'base' && !preview) {
+    sceneWeather(scenes[time]);
+  } else sceneWeather(scene || (hour < 12 ? 'morning' : hour < 17 ? 'noon' : hour < 20 ? 'evening' : 'night'), preview);
   // hourlyForcast();
   // dailyForcast();
 }
@@ -151,6 +257,7 @@ async function query() {
   if (Math.abs(Number(location.latitude)) > 90 || Math.abs(Number(location.longitude)) > 180) {
     throw new Error("❌ 经纬度设置错误，请重新获取有效定位。");
   }
+  if (!reserveAttempt()) return false;
   // query API
   const url = `https://api.caiyunapp.com/v2.6/${$.read("token").caiyun}/${$.read("location").longitude
     },${$.read("location").latitude
@@ -197,6 +304,7 @@ async function query() {
     }
   }
   $.address = address;
+  return true;
 }
 
 // Only official API records, with an identity, active status and explicit validity.
@@ -318,16 +426,16 @@ function capabilitySummary(weather, now) {
   return '能力摘要（本次响应，非购买凭证）\n实况：' + state(result.realtime, b => Number.isFinite(b.temperature) && typeof b.skycon === 'string' && !!mapSkycon(b.skycon)) +
     '\n逐小时：' + state(result.hourly, temperature) + '\n逐日：' + state(result.daily, daily) + '\n预警：' + alert;
 }
-function sceneWeather(scene, manual = false) {
+function sceneWeather(scene, manual = false, changed = false) {
   const now = Date.now(), result = $.weather.result;
   const preview = manual || /(?:^|&)preview=1(?:&|$)/.test(typeof $argument === 'string' ? $argument : '');
-  const diagnostic = preview ? capabilitySummary($.weather, now) + '\n' : '';
+  const diagnostic = preview ? capabilitySummary($.weather, now) + '\n' + ($.budgetText || '') + '\n' : '';
   if (($.read('scenes') || {})[scene] === false && !preview) return;
   const server = Number($.weather.server_time) * 1000;
   const stale = Number.isFinite(server) && server > 0 && (now - server > 3600000 || server - now > 300000);
   const warnings = stale ? null : activeWarnings(now), alert = warningSummary(warnings, preview);
   if (scene === 'noon') {
-    if (alert.fresh.length || preview) $.notify('[彩云天气 时间核验版]', preview ? '午间预览（不写去重状态）' : '午间官方预警更新', `${diagnostic}${alert.text}\n${alert.fresh.map(a => a.description).join('\n')}\n${weatherTimes($.weather, $.queriedAt, now)}`);
+    if (alert.fresh.length || preview || changed) $.notify('[彩云天气 时间核验版]', preview ? '午间预览（不写去重状态）' : changed ? '可信天气明显变化' : '午间官方预警更新', `${diagnostic}${changed ? '可信观测较上次变化≥5°C或雨雪状态改变；请留意出行。\n' : ''}${alert.text}\n${alert.fresh.map(a => a.description).join('\n')}\n${weatherTimes($.weather, $.queriedAt, now)}`);
     return;
   }
   const today = shanghaiDate(now);
