@@ -1,4 +1,4 @@
-// Release 2026.10-budget.1. Based on Peng-YM caiyun.js; author credit retained.
+// Release 2026.10-notify.1. Based on Peng-YM caiyun.js; author credit retained.
 /**
 彩云天气 v0.1 alpha
 @author: Peng-YM
@@ -323,8 +323,12 @@ function warningSummary(warnings, preview) {
     const keys = fresh.map(a => JSON.stringify([a.alertId,a.code,a.pubtimestamp,a.update_time || a.updated || '']));
     $.write(seen.concat(keys).slice(-200), 'scene_alerts_v1');
   }
-  return {fresh, text:warnings === null ? '⚠️ 接口未提供有效预警数据，不能判断是否有预警。' :
-    warnings.length ? (fresh.length ? '新增/更新官方预警：' : '持续预警：') + warnings.map(a => a.title).join('；') : '本次API有效预警记录为空（不保证当地无预警）'};
+  const labels = (warnings || []).map(a => {
+    const label = mapAlertCode(a.code);
+    return label.includes('undefined') ? '官方气象预警（类型/等级未识别）' : label + '预警';
+  });
+  return {fresh, text:warnings === null ? '⚠️ 预警不可用，不能判断是否有预警。' :
+    warnings.length ? (fresh.length ? '⚠️ 新增/更新官方预警：' : '⚠️ 持续预警：') + labels.join('；') : '本次未返回有效预警'};
 }
 
 function weatherTimes(weather, queriedAt, generatedAt) {
@@ -426,6 +430,14 @@ function capabilitySummary(weather, now) {
   return '能力摘要（本次响应，非购买凭证）\n实况：' + state(result.realtime, b => Number.isFinite(b.temperature) && typeof b.skycon === 'string' && !!mapSkycon(b.skycon)) +
     '\n逐小时：' + state(result.hourly, temperature) + '\n逐日：' + state(result.daily, daily) + '\n预警：' + alert;
 }
+function displayTemperature(value) { return String(Number(value.toFixed(1))); }
+function notificationFooter(weather, queriedAt, now) {
+  // Reuse the verified timestamp logic; retain every risk, omit redundant clocks.
+  return weatherTimes(weather, queriedAt, now).split('\n').filter(line =>
+    !line.startsWith('接口响应时间：') && !line.startsWith('通知生成时间：')).map(line =>
+      line.startsWith('数据更新时间：未知') ? '观测时间：未知，无法判断新鲜度' :
+      line.startsWith('数据更新时间：') ? line.replace('数据更新时间：','观测时间：').replace('（上游obsTime）','') : line).join('\n');
+}
 function sceneWeather(scene, manual = false, changed = false) {
   const now = Date.now(), result = $.weather.result;
   const preview = manual || /(?:^|&)preview=1(?:&|$)/.test(typeof $argument === 'string' ? $argument : '');
@@ -434,14 +446,15 @@ function sceneWeather(scene, manual = false, changed = false) {
   const server = Number($.weather.server_time) * 1000;
   const stale = Number.isFinite(server) && server > 0 && (now - server > 3600000 || server - now > 300000);
   const warnings = stale ? null : activeWarnings(now), alert = warningSummary(warnings, preview);
+  const footer = preview ? weatherTimes($.weather, $.queriedAt, now) : notificationFooter($.weather, $.queriedAt, now);
   if (scene === 'noon') {
-    if (alert.fresh.length || preview || changed) $.notify('[彩云天气 时间核验版]', preview ? '午间预览（不写去重状态）' : changed ? '可信天气明显变化' : '午间官方预警更新', `${diagnostic}${changed ? '可信观测较上次变化≥5°C或雨雪状态改变；请留意出行。\n' : ''}${alert.text}\n${alert.fresh.map(a => a.description).join('\n')}\n${weatherTimes($.weather, $.queriedAt, now)}`);
+    if (alert.fresh.length || preview || changed) $.notify('☀️午间天气' + (preview ? ' · 预览' : ''), preview ? '午间预览（不写去重状态）' : changed ? '可信天气明显变化' : '午间官方预警更新', `${alert.text}\n${changed ? '可信观测较上次变化≥5°C或雨雪状态改变；请留意出行。\n' : ''}${diagnostic}\n${footer}`);
     return;
   }
   const today = shanghaiDate(now);
   const daily = result.daily || {};
   const temp = !stale && forecastTemp(daily, today);
-  const range = temp ? `今日最低/最高：${temp.min}～${temp.max}°C` : '今日预报不可用（缺数据或权限）';
+  const range = temp ? `今日最低/最高：${displayTemperature(temp.min)}～${displayTemperature(temp.max)}°C` : '今日预报不可用（缺数据或权限）';
   const hourly = result.hourly || {};
   const future = rows => !stale && hourly.status === 'ok' && Array.isArray(rows) ? rows.filter(x => {
     if (!x || !/T.*(?:Z|[+-]\d{2}:?\d{2})$/.test(x.datetime)) return false;
@@ -450,27 +463,41 @@ function sceneWeather(scene, manual = false, changed = false) {
   const points = future(hourly.precipitation).filter(x => typeof x.probability === 'number' && x.probability >= 0 && x.probability <= 100);
   const p = !stale && points.length ? Math.max(...points.map(x => x.probability)) : null;
   const rainThreshold = Number($.read('umbrella_probability_threshold'));
-  const rain = p === null ? '未来3小时降雨概率不可用（缺数据或权限）；无法据此判断带伞' : `未来3小时（已提供时段）最高降雨概率：${p}%；${p >= (rainThreshold > 0 && rainThreshold <= 100 ? rainThreshold : 40) ? '建议带伞' : '按已提供概率可不带伞，仍留意变化'}`;
-  let body = `${range}\n${rain}`;
+  const advice = p === null ? '无法判断带伞' : p >= (rainThreshold > 0 && rainThreshold <= 100 ? rainThreshold : 40) ? '建议带伞' : '可不带伞，留意变化';
+  const rain = p === null ? '未来3小时降雨概率不可用（缺数据或权限）；无法据此判断带伞' : `未来3小时最高降雨概率：${p}%；${advice}（已提供时段）`;
+  const temperatures = future(hourly.temperature).filter(x => Number.isFinite(x.value)).slice(0,3);
+  const trend = temperatures.length > 1 ? (temperatures[temperatures.length-1].value < temperatures[0].value ? '降温' : temperatures[temperatures.length-1].value > temperatures[0].value ? '升温' : '温度平稳') : '温度趋势不可用';
+  const hours = temperatures.map(x => {
+    const sky = future(hourly.skycon).find(s => Date.parse(s.datetime) === Date.parse(x.datetime));
+    return new Date(Date.parse(x.datetime) + 28800000).toISOString().slice(11,16) + ` ${displayTemperature(x.value)}°C ${sky && mapSkycon(sky.value) ? mapSkycon(sky.value)[0] : '天气状况未提供'}`;
+  });
+  const hourlyText = hours.length ? hours.join('\n') : '逐小时温度/天气不可用（缺数据或权限）';
+  let body = `${range}\n${rain}\n\n${hourlyText}`;
   if (scene === 'evening') {
-    const hours = future(hourly.temperature).filter(x => Number.isFinite(x.value)).slice(0,3).map(x => {
-      const sky = future(hourly.skycon).find(s => Date.parse(s.datetime) === Date.parse(x.datetime));
-      return new Date(Date.parse(x.datetime) + 28800000).toISOString().slice(11,16) + ` ${x.value}°C ${sky && mapSkycon(sky.value) ? mapSkycon(sky.value)[0] : '天气状况未提供'}`;
-    });
-    body += '\n' + (hours.length ? '未来3小时（Asia/Shanghai）\n' + hours.join('\n') : '逐小时温度/天气不可用（缺数据或权限）');
+    const change = temperatures.length > 1 ? `未来3小时：${displayTemperature(temperatures[0].value)} → ${displayTemperature(temperatures[temperatures.length-1].value)}°C（${trend}；已提供时段）` : '未来3小时温度趋势不可用（缺数据或权限）';
+    body = `${change}\n${rain}\n\n${hourlyText}`;
   }
   if (scene === 'night') {
     const tomorrow = shanghaiDate(now + 86400000);
     const next = !stale && forecastTemp(daily, tomorrow);
-    body = next ? `明日最低/最高：${next.min}～${next.max}°C` : '明日预报不可用（缺数据或权限），不以今日代替';
+    body = next ? `明日最低/最高：${displayTemperature(next.min)}～${displayTemperature(next.max)}°C` : '明日预报不可用（缺数据或权限），不以今日代替';
     if (temp && next) {
       const delta = (next.min + next.max - temp.min - temp.max) / 2;
       const threshold = Number($.read('temp_change_threshold'));
-      body += `\n日均温（每日最低与最高的均值）较今天${Math.abs(delta) >= (threshold > 0 && threshold <= 30 ? threshold : 5) ? '明显' : ''}${delta < 0 ? '降温' : '升温'}${Math.abs(delta)}°C`;
+      body += displayTemperature(Math.abs(delta)) === '0' ? '\n日均温（每日最低与最高的均值）较今天基本持平' : `\n日均温（每日最低与最高的均值）较今天${Math.abs(delta) >= (threshold > 0 && threshold <= 30 ? threshold : 5) ? '明显' : ''}${delta < 0 ? '降温' : '升温'}${displayTemperature(Math.abs(delta))}°C`;
     } else body += '\n缺同口径日温度，无法比较升降温';
   }
   if (stale) body = '⚠️ 预报已降级：接口响应陈旧或时间异常，不生成出行/温差建议。';
-  $.notify('[彩云天气 时间核验版]', {morning:'今天出门',evening:'回家/出行',night:'明日预报'}[scene], `${preview ? '手动预览（不写去重状态）\n' : ''}${diagnostic}${body}\n${alert.text}\n${weatherTimes($.weather, $.queriedAt, now)}`);
+  const denied = block => block && ['denied','permission_denied','forbidden'].includes(block.status);
+  const permissions = [[result.realtime,'实况'],[result.hourly,'逐小时'],[result.daily,'逐日'],[result.alert,'预警']].filter(([block]) => denied(block)).map(([,label]) => label + '缺权限').join('；');
+  if (permissions) body += '\n' + permissions + '（未知）';
+  const city = $.address && $.address.city;
+  const safeCity = typeof city === 'string' && city !== '当前位置' && /^[\u3400-\u9fffA-Za-z· ]{2,24}$/.test(city) ? ' · ' + city : '';
+  const title = {morning:'🌤今日天气',evening:'🌆返程天气',night:'🌙明日天气'}[scene] + safeCity + (preview ? ' · 预览' : '');
+  const subtitle = stale ? '数据陈旧或时间异常 · 预报已降级' : warnings && warnings.length ? '官方预警 · 请留意出行' :
+    {morning:'今天出门 · ' + advice,evening:trend + ' · ' + advice,night:'明日预报 · 同口径温差'}[scene];
+  const warningTop = warnings && warnings.length ? alert.text + '\n\n' : '';
+  $.notify(title, subtitle, `${warningTop}${body}${warningTop ? '' : '\n' + alert.text}\n\n${preview ? '手动预览（不写去重状态）\n' + diagnostic : ''}${footer}`);
 }
 
 function dailyForcast() { }

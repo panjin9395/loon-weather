@@ -12,8 +12,8 @@ test('base schedule has exactly 24 independent slots and four scene dispatches',
  assert.match(p,/cron "30 6-21 \* \* \*".*argument="mode=base"/);
  assert.match(p,/cron "0 7,8,9,12,16,17,18,20 \* \* \*".*argument="mode=base"/);
  const s=settings();let requests=0;const titles=[];
- for(const t of slots){const r=await base(s,t);requests+=r.requests.length;titles.push(...r.notices.map(n=>n[1]));}
- assert.equal(requests,24);assert.deepEqual(titles,['今天出门','回家/出行','明日预报']);
+ for(const t of slots){const r=await base(s,t);requests+=r.requests.length;titles.push(...r.notices.map(n=>n[0]));}
+ assert.equal(requests,24);assert.deepEqual(titles,['🌤今日天气','🌆返程天气','🌙明日天气']);
  assert.equal(ledger(s).day.used,24);assert.equal(Object.keys(ledger(s).day.slots).length,24);
  assert.equal((await base(s,'07:30')).requests.length,0);
  assert.equal((await base(s,'22:30')).requests.length,0);
@@ -95,5 +95,5 @@ test('manual exhausted cap never starves scenes, missing config does not annual 
  s.caiyun_budget_v1=JSON.stringify({...ledger(s),day:{date:'2026-10-18',used:27,extra:3,slots:{}}});
  assert.equal((await base(s,'17:00')).requests.length,0);assert.equal((await weather(s,fixture())).requests.length,0);
 });
-test('release version is present in script and plugin',()=>{const v=fs.readFileSync('VERSION','utf8').trim();assert.equal(v,'2026.10-budget.1');assert.ok(fs.readFileSync('caiyun-weather-v2.js','utf8').includes(v));assert.ok(fs.readFileSync('CaiyunWeather.plugin','utf8').includes(v));});
+test('release version is present in script and plugin',()=>{const v=fs.readFileSync('VERSION','utf8').trim();assert.equal(v,'2026.10-notify.1');assert.ok(fs.readFileSync('caiyun-weather-v2.js','utf8').includes(v));assert.ok(fs.readFileSync('CaiyunWeather.plugin','utf8').includes(v));});
 module.exports={at,slots,base,ledger};
