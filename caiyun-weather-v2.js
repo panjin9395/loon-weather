@@ -1,4 +1,4 @@
-// Release 2026.10-allday.1. Based on Peng-YM caiyun.js; author credit retained.
+// Release 2026.10-commute-air.1. Based on Peng-YM caiyun.js; author credit retained.
 /**
 彩云天气 v0.1 alpha
 @author: Peng-YM
@@ -487,6 +487,40 @@ function notificationFooter(weather, queriedAt, now) {
       line.startsWith('数据更新时间：未知') ? '观测时间：未知，无法判断新鲜度' :
       line.startsWith('数据更新时间：') ? line.replace('数据更新时间：','观测时间：').replace('（上游obsTime）','') : line).join('\n');
 }
+// Official metric wind is km/h; compare m/s thresholds in km/h to avoid rounding gaps.
+function commuteWind(weather, r) {
+  if (weather.unit !== undefined && !['metric','metric:v1','metric:v2'].includes(weather.unit)) return null;
+  const w = r.wind;
+  if (!w || w.status && w.status !== 'ok' || !Number.isFinite(w.speed) || w.speed < 0 || w.speed > 220.68 || !Number.isFinite(w.direction) || w.direction < 0 || w.direction > 360) return null;
+  const thresholds = [0.3,1.6,3.4,5.5,8,10.8,13.9,17.2,20.8,24.5,28.5,32.7,37,41.5,46.2,51,56.1];
+  const grade = thresholds.filter(x => w.speed >= x * 3.6).length;
+  const dirs = ['北','北东北','东北','东东北','东','东东南','东南','南东南','南','南西南','西南','西西南','西','西西北','西北','北西北'];
+  const direction = dirs[Math.ceil((w.direction - 11.25) / 22.5 + 16) % 16];
+  return {grade, text: direction + '风' + grade + '级'};
+}
+// Display-only: reuse the combined response, never participate in alert/budget state.
+function commuteDetails(weather, rainRisk) {
+  const r = weather.result.realtime;
+  if (!r || r.status !== 'ok') return '';
+  const air = r.air_quality, parts = [];
+  if (air && (!air.status || air.status === 'ok')) {
+    const aqi = air.aqi && air.aqi.chn;
+    if (Number.isFinite(aqi) && aqi >= 0 && aqi <= 500) {
+      const desc = air.description && air.description.chn;
+      const labels = ['优','良','轻度污染','中度污染','重度污染','严重污染'];
+      const expected = labels[[50,100,150,200,300,500].findIndex(limit => aqi <= limit)];
+      const label = desc === expected ? '空气' + desc + ' ' : '';
+      parts.push(label + '国标AQI ' + displayTemperature(aqi));
+    }
+  }
+  const wind = commuteWind(weather, r);
+  if (wind) parts.push(wind.text);
+  const highlights = [], life = r.life_index;
+  const uv = life && (!life.status || life.status === 'ok') && life.ultraviolet;
+  if (uv && (!uv.status || uv.status === 'ok') && Number.isFinite(uv.index) && uv.index >= 7 && uv.index <= 11) highlights.push('紫外线强，注意防晒');
+  if (Number.isFinite(r.humidity) && r.humidity >= 0.9 && r.humidity <= 1 && (rainRisk || wind && wind.grade >= 6)) highlights.push('高湿' + Math.round(r.humidity * 100) + '%');
+  return [parts.join(' · '), highlights.join(' · ')].filter(Boolean).join('\n');
+}
 function sceneWeather(scene, manual = false, changed = false, silent = false) {
   const now = Date.now(), result = $.weather.result;
   const preview = manual || /(?:^|&)preview=1(?:&|$)/.test(typeof $argument === 'string' ? $argument : '');
@@ -524,7 +558,8 @@ function sceneWeather(scene, manual = false, changed = false, silent = false) {
   let body = `${range}\n${rain}\n\n${hourlyText}`;
   if (scene === 'morning' || scene === 'evening' || scene === 'noon') {
     const change = temperatures.length > 1 ? `未来3小时：${displayTemperature(temperatures[0].value)} → ${displayTemperature(temperatures[temperatures.length-1].value)}°C（${trend}；已提供时段）` : '未来3小时温度趋势不可用（缺数据或权限）';
-    body = `${scene === 'morning' ? range + '\n' : ''}${change}\n${rain}\n${trend === '降温' ? '降温，酌情添衣' : temperatures.length > 1 ? '按体感调整衣着' : '温度趋势不足，无法据此判断添衣'}\n\n${hourlyText}`;
+    const details = !stale ? commuteDetails($.weather, p !== null && p >= (rainThreshold > 0 && rainThreshold <= 100 ? rainThreshold : 40)) : '';
+    body = `${scene === 'morning' ? range + '\n' : ''}${change}\n${rain}\n${trend === '降温' ? '降温，酌情添衣' : temperatures.length > 1 ? '按体感调整衣着' : '温度趋势不足，无法据此判断添衣'}${details ? '\n' + details : ''}\n\n${hourlyText}`;
   }
   if (scene === 'night') {
     const tomorrow = shanghaiDate(now + 86400000);

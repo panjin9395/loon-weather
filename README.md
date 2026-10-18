@@ -1,4 +1,4 @@
-# Loon 彩云天气：全天检查，少打扰（2026.10-allday.1）
+# Loon 彩云天气：全天检查，少打扰（2026.10-commute-air.1）
 
 原插件 URL 不变：
 https://raw.githubusercontent.com/panjin9395/loon-weather/main/CaiyunWeather.plugin
@@ -55,9 +55,19 @@ Loon本地存储没有跨脚本进程原子CAS/锁，先写读回不能保证同
 
 官方预警要求status=ok、有效id/code/发布时间、alerting/预警中、无拒绝/解除/过期记录；按最多200版本保存去重。`content=[]`仅代表本次API无有效记录，不保证当地无预警；缺块、denied、`content=[] && adcodes=null`均未知。概率单位0–100%，缺失不是0。接口陈旧或时间异常不生成预测建议/预警提醒。
 
+## 本次仅增强通勤显示
+
+- 三摘要复用同一次综合响应，新增紧凑一行如 `空气优 国标AQI 25 · 西南风3级`。只读 `aqi.chn` / `description.chn`，0有效；缺失、非法或拒绝权限不填默认值，美标不冒充国标。描述与国标数值等级矛盾时仅保留数值。
+- 默认metric/metric:v1/metric:v2风速是km/h，按官方m/s连续边界换算风级；风向为从北顺时针16方位，恰好半边界归前一方位；未识别单位/无有效方向不猜。此脚本未请求SI或英制，意外收到时省略风行。
+- 实况UV index≥7且≤11才突出防晒（不混用逐日0–5等级）；湿度≥90%仅在已达到原带伞阈值或风≥6级时突出。普通湿度/弱UV、PM2.5/PM10、日出日落不堆入通勤卡。
+- 官方预警仍置顶，通勤建议在前、空气风况在后、小时详情/时间页脚最后；未知观测时间统一保留，空气数值不等于已验证新鲜。温度建议、全天24+3预算、3km锚点、5°C变化、预警去重及所有cron均未更改。无新增API或坐标上传，旧今日天气已由用户禁用，本次不操作它。
+- 合成样本和生成脚本见 `preview/commute-details-fixtures.txt` / `commute-details-examples.cjs`；不是实测空气或真机通知。
+
 ## 手机更新步骤（一次）
 
-1. 在Loon更新**原URL插件**，不要另建副本；版本应为 `2026.10-allday.1`。
+本次从 `2026.10-allday.1` 升级：只在Loon刷新原URL的 **caiyun-weather-v2.js 天气脚本缓存一次**，不需要更换插件/定位脚本、不改cron/Token/quota、不重新禁用旧脚本，不要求截图或新app。下列是完整安装/迁移说明，不是本次额外步骤：
+
+1. 在Loon更新**原URL插件**，不要另建副本；版本应为 `2026.10-commute-air.1`。
 2. 同次操作刷新/清除该插件的远程脚本缓存，天气和定位两个v2脚本都需更新。不动手机现有Token、定位和quota，不需要新app。
 3. 检查只剩两条基础cron（上面的全天整点+07:30）及一条条件机动cron；删除旧白天半点基础任务及旧独立场景任务。时区保持Asia/Shanghai。
 4. 可运行「彩云天气手动测试」一次看能力摘要/本地预算。会消耗一次共享机动，不影响正式通知去重。无须每天更新。
@@ -70,9 +80,10 @@ Loon本地存储没有跨脚本进程原子CAS/锁，先写读回不能保证同
 
 ```sh
 node --test all-day.test.cjs
+node --test commute-details.test.cjs
 TZ=America/Los_Angeles node --test all-day.test.cjs
 ```
 
 all-day导入commute→notification→budget→capabilities→scenes→weather，单入口不重复计数。覆盖全天24slot、三摘要、预算/失败/隐私/机动、4.9/5°C与方向/冷却、预报转雨雪/概率变化与unknown、缺观测独立预报、跨午夜/时区、位置重置、手动不吞正式状态及官方预警升级。先红后绿，不代表真机iOS必达/全天运行/计费权限验收。
 
-References: [hourly schema](https://docs.caiyunapp.com/weather-api/v2/v2.6/3-hourly.html), [alerts](https://docs.caiyunapp.com/en/weather-api/v2/v2.6/5-alert.html), [Loon arguments](https://nsloon.app/en/docs/Script).
+References: [realtime fields](https://docs.caiyunapp.com/weather-api/v2/v2.6/1-realtime.html), [units](https://docs.caiyunapp.com/weather-api/v2/v2.6/tables/unit.html), [wind](https://docs.caiyunapp.com/weather-api/v2/v2.6/tables/wind.html), [life index](https://docs.caiyunapp.com/weather-api/v2/v2.6/tables/lifeindex.html), [hourly schema](https://docs.caiyunapp.com/weather-api/v2/v2.6/3-hourly.html), [alerts](https://docs.caiyunapp.com/en/weather-api/v2/v2.6/5-alert.html), [Loon arguments](https://nsloon.app/en/docs/Script).

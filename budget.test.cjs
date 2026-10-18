@@ -95,5 +95,5 @@ test('manual exhausted cap never starves scenes, missing config does not annual 
  s.caiyun_budget_v1=JSON.stringify({...ledger(s),day:{date:'2026-10-18',used:27,extra:3,slots:{}}});
  assert.equal((await base(s,'17:00')).requests.length,0);assert.equal((await weather(s,fixture())).requests.length,0);
 });
-test('release version is present in script and plugin',()=>{const v=fs.readFileSync('VERSION','utf8').trim();assert.equal(v,'2026.10-allday.1');assert.ok(fs.readFileSync('caiyun-weather-v2.js','utf8').includes(v));assert.ok(fs.readFileSync('CaiyunWeather.plugin','utf8').includes(v));});
+test('release version is present in script and plugin',()=>{const v=fs.readFileSync('VERSION','utf8').trim();assert.equal(v,'2026.10-commute-air.1');assert.ok(fs.readFileSync('caiyun-weather-v2.js','utf8').includes(v));assert.ok(fs.readFileSync('CaiyunWeather.plugin','utf8').includes(v));});
 module.exports={at,slots,base,ledger};
