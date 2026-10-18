@@ -1,4 +1,4 @@
-// Release 2026.10-commute.1. Based on Peng-YM caiyun.js; author credit retained.
+// Release 2026.10-allday.1. Based on Peng-YM caiyun.js; author credit retained.
 /**
 彩云天气 v0.1 alpha
 @author: Peng-YM
@@ -131,8 +131,7 @@ function backgroundQuiet() {
   return /(?:^|&)mode=(base|extra)(?:&|$)/.test(a) && !/(?:^|&)preview=1(?:&|$)/.test(a);
 }
 function baseSlots() {
-  return Array.from({length:16}, (_,i) => String(i+6).padStart(2,'0') + ':30')
-    .concat([7,8,9,12,16,17,18,20].map(h => String(h).padStart(2,'0') + ':00')).sort();
+  return Array.from({length:24}, (_,h) => h === 7 ? '07:30' : String(h).padStart(2,'0') + ':00');
 }
 function budgetState() {
   let state;
@@ -183,9 +182,58 @@ function rememberConditions(silent) {
   const state=budgetState(), now=Date.now(), snap=trustedSnapshot();
   const warnings=Number.isFinite($.weather.server_time) && Math.abs(now-$.weather.server_time*1000)<=3600000 ? activeWarnings(now) : null;
   const old=state.condition;
-  const change=snap && old && now-old.at<=3*3600000 && (Math.abs(snap.temperature-old.temperature)>=5 || snap.rain!==old.rain);
+  const notices=[];
+  state.changeCooldown=state.changeCooldown || {};
+  if (snap && old && now > old.at && now-old.at<=2*3600000 && snap.observed>old.observed && snap.observed-old.observed<=2*3600000) {
+    const delta=snap.temperature-old.temperature;
+    const kind=delta<0?'observed-cooling':'observed-warming';
+    if (Math.abs(delta)>=5 && !(state.changeCooldown[kind]>now-3*3600000)) {
+      notices.push(`可信观测较相邻有效样本${delta<0?'降温':'升温'}${displayTemperature(Math.abs(delta))}°C（样本间隔≤2小时）`);
+      state.changeCooldown[kind]=now;
+    }
+  }
+  const h=$.weather.result.hourly || {};
+  const freshServer=Number.isFinite($.weather.server_time) && now-$.weather.server_time*1000<=3600000 && $.weather.server_time*1000-now<=300000;
+  const future=rows => freshServer && h.status==='ok' && Array.isArray(rows) ? rows.filter(x=>x && typeof x.datetime==='string' && /T.*(?:Z|[+-]\d{2}:?\d{2})$/.test(x.datetime) && Date.parse(x.datetime)>=now && Date.parse(x.datetime)<now+3*3600000).sort((a,b)=>Date.parse(a.datetime)-Date.parse(b.datetime)) : [];
+  const temps=future(h.temperature).filter(x=>Number.isFinite(x.value));
+  let forecastHazard=false;
+  if (temps.length>1) {
+    const low=temps.reduce((a,b)=>a.value<b.value?a:b), high=temps.reduce((a,b)=>a.value>b.value?a:b);
+    const span=high.value-low.value, cooling=Date.parse(high.datetime)<Date.parse(low.datetime), kind=cooling?'forecast-cooling':'forecast-warming';
+    if (span>=5) {
+      forecastHazard=true;
+      if (!(state.changeCooldown[kind]>now-3*3600000)) {
+        notices.push(`预报变天提醒：未来3小时已提供时段预计${cooling?'降温':'升温'}${displayTemperature(span)}°C（${new Date(Math.min(Date.parse(low.datetime),Date.parse(high.datetime))+28800000).toISOString().slice(11,16)}–${new Date(Math.max(Date.parse(low.datetime),Date.parse(high.datetime))+28800000).toISOString().slice(11,16)}；非实时观测）`);
+        state.changeCooldown[kind]=now;
+      }
+    }
+  }
+  const skies=future(h.skycon).map(x=>({at:Date.parse(x.datetime),kind:mapSkycon(x.value) ? /SNOW/.test(x.value)?'snow':/RAIN/.test(x.value)?'rain':'dry' : 'unknown'}));
+  const probs=future(h.precipitation).filter(x=>Number.isFinite(x.probability) && x.probability>=0 && x.probability<=100);
+  const nextSky=skies.find(x=>x.at>now), currentSky=skies.find(x=>x.at===now);
+  const previous=state.forecastWet, recent=previous && now>previous.at && now-previous.at<=2*3600000;
+  let wet='unknown', evidence='';
+  if (nextSky) {
+    wet=nextSky.kind;
+    if (['rain','snow'].includes(wet) && (currentSky && currentSky.kind==='dry' || recent && previous.kind==='dry')) evidence=`逐小时天气由无雨转${wet==='snow'?'雪':'雨'}`;
+  } else if (skies[0]) wet=skies[0].kind;
+  const nextProbability=probs.find(x=>Date.parse(x.datetime)>now) || probs[0];
+  const probability=nextProbability ? nextProbability.probability : null;
+  if (!evidence && probability!==null && probability>=60 && recent && previous.probability!==null && previous.probability<60) evidence=`下一可用小时降水概率由${previous.probability}%升至${probability}%（阈值60%）`;
+  const wetKind=wet==='snow'?'forecast-snow':'forecast-rain';
+  if (evidence) {
+    forecastHazard=true;
+    if (!(state.changeCooldown[wetKind]>now-3*3600000)) {
+      notices.push('预报变天提醒：'+evidence+'（带时区的未来小时；非实时降水）');
+      state.changeCooldown[wetKind]=now;
+    }
+  }
+  state.forecastWet={at:now,kind:wet,probability};
+  $.changeText=notices.join('\n');
+  const change=notices.length>0;
   if (snap) state.condition=snap;
   const untils=(warnings || []).map(a=>Math.min(now+2*3600000,a.expiretimestamp ? a.expiretimestamp*1000 : now+2*3600000));
+  if (forecastHazard) untils.push(now+2*3600000);
   if (snap && snap.rain) untils.push(snap.observed+2*3600000);
   state.hazardUntil=untils.length ? Math.max(...untils) : 0;
   saveBudget(state);
@@ -202,6 +250,7 @@ function reserveAttempt() {
   const reserved = baseSlots().filter(t => t >= c.time && !state.day.slots[t]).length;
   const priority = !!slot && !!c.scenes[slot];
   const allowed = limit.remaining > 0 && state.day.used < limit.cap &&
+    (!formal || state.day.used-state.day.extra < 24) &&
     (priority || formal && limit.cap - state.day.used > futureScenes.length ||
       !formal && state.day.extra < 3 && limit.cap - state.day.used > reserved);
   if (!allowed) {
@@ -448,7 +497,7 @@ function sceneWeather(scene, manual = false, changed = false, silent = false) {
   const warnings = stale ? null : activeWarnings(now), alert = warningSummary(warnings, preview);
   const footer = preview ? weatherTimes($.weather, $.queriedAt, now) : notificationFooter($.weather, $.queriedAt, now);
   if (silent && !preview) {
-    if (alert.fresh.length || changed) $.notify('⚠️通勤天气提醒', alert.fresh.length ? '官方预警更新 · 留意通勤安全' : '可信天气明显变化 · 通勤参考', `${alert.text}\n${changed ? '可信观测较上次变化≥5°C或雨雪状态改变；通勤外出留意天气，酌情带伞添衣（生活建议，非官方预警）。\n' : ''}\n${footer}`);
+    if (alert.fresh.length || changed) $.notify('⚠️通勤天气提醒', alert.fresh.length ? '官方预警更新 · 留意通勤安全' : ($.changeText || '').includes('预报变天提醒') ? '预报变天提醒 · 非实时监测' : '可信天气明显变化 · 通勤参考', `${alert.text}\n${changed ? $.changeText + '\n生活建议，非官方预警。\n' : ''}\n${footer}`);
     return;
   }
   const today = shanghaiDate(now);

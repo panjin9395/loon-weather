@@ -79,6 +79,17 @@
         return;
       }
     }
+    // Reset weather comparison state before changing anchor; keep quota ledger intact.
+    const budgetRaw=$persistentStore.read('caiyun_budget_v1');
+    if (budgetRaw) {
+      const budget=load('caiyun_budget_v1');
+      delete budget.condition;
+      delete budget.forecastWet;
+      delete budget.changeCooldown;
+      budget.hazardUntil=0;
+      const cleared=JSON.stringify(budget);
+      if (!$persistentStore.write(cleared,'caiyun_budget_v1') || $persistentStore.read('caiyun_budget_v1')!==cleared) throw new Error('本地写入失败');
+    }
     settings.location = { latitude: String(lat), longitude: String(lon) };
     settings.location_updated = Date.now();
     if (!$persistentStore.write(JSON.stringify(settings), 'caiyun')) throw new Error('本地写入失败');
