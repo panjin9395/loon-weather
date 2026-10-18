@@ -1,5 +1,5 @@
 #!name=彩云天气定位与手动测试
-#!desc=2026.10-notify.1：原生通知分层；每天24基础slot+最多3次手动/条件机动。07:30出门、12预警更新、17返程、20:30明日；其他无变化安静。3km本地定位，预算为本地估算，非实时监控。
+#!desc=2026.10-commute.1：每天07:30上班、12:00午间外出、17:00下班三次固定摘要；20:30及其他slot仅有效预警/可信显著变化。每天24基础slot+最多3次共享机动。3km本地定位，预算为本地估算，非实时监控。
 #!author=local-config
 #!homepage=https://github.com/panjin9395/loon-weather
 
@@ -8,7 +8,7 @@ http-request ^https:\/\/(weather-data\.apple|weatherkit\.apple|api\.weather)\.co
 generic script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-location-v2.js, timeout=20, tag=彩云定位诊断
 generic script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-weather-v2.js, timeout=60, tag=彩云天气手动测试
 
-# 每天24个基础slot，场景在同一次请求内分派，不另建四场景cron。
+# 每天24个基础slot，场景在同一次请求内分派，不另建独立摘要cron。
 # cron 按设备/Loon 时区；保持设备 Asia/Shanghai。
 cron "30 6-21 * * *" script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-weather-v2.js, argument="mode=base", timeout=60, tag=彩云天气半点基础检查
 cron "0 7,8,9,12,16,17,18,20 * * *" script-path=https://raw.githubusercontent.com/panjin9395/loon-weather/main/caiyun-weather-v2.js, argument="mode=base", timeout=60, tag=彩云天气整点基础检查

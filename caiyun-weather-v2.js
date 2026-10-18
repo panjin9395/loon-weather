@@ -1,4 +1,4 @@
-// Release 2026.10-notify.1. Based on Peng-YM caiyun.js; author credit retained.
+// Release 2026.10-commute.1. Based on Peng-YM caiyun.js; author credit retained.
 /**
 彩云天气 v0.1 alpha
 @author: Peng-YM
@@ -11,7 +11,7 @@
 
 TODO:
 - 降雨提醒
-- 每日睡前预报
+- 通勤外出参考（不推送睡前明日摘要）
 
 配置：
 1️⃣ 配置自动定位
@@ -228,7 +228,7 @@ async function scheduler() {
   const scene = (arg.match(/(?:^|&)scene=(morning|noon|evening|night)(?:&|$)/) || [])[1];
   const mode = (arg.match(/(?:^|&)mode=(base|extra)(?:&|$)/) || [])[1];
   const time = new Date(Date.now() + 28800000).toISOString().slice(11,16);
-  const scenes = {'07:30':'morning','12:00':'noon','17:00':'evening','20:30':'night'};
+  const scenes = {'07:30':'morning','12:00':'noon','17:00':'evening'};
   const preview = /(?:^|&)preview=1(?:&|$)/.test(arg) || !mode && !scene;
   $.runContext = {mode, scene, preview, time, scenes};
   if (mode === 'base' && !preview && !baseSlots().includes(time)) return;
@@ -238,10 +238,10 @@ async function scheduler() {
   const silent = mode === 'extra' || mode === 'base' && !scenes[time];
   const changed = !preview && rememberConditions(silent);
   if (silent && !preview) {
-    sceneWeather('noon', false, changed);
+    sceneWeather('noon', false, changed, true);
   } else if (mode === 'base' && !preview) {
     sceneWeather(scenes[time]);
-  } else sceneWeather(scene || (hour < 12 ? 'morning' : hour < 17 ? 'noon' : hour < 20 ? 'evening' : 'night'), preview);
+  } else sceneWeather(scene || (hour < 12 ? 'morning' : hour < 17 ? 'noon' : 'evening'), preview);
   // hourlyForcast();
   // dailyForcast();
 }
@@ -438,17 +438,17 @@ function notificationFooter(weather, queriedAt, now) {
       line.startsWith('数据更新时间：未知') ? '观测时间：未知，无法判断新鲜度' :
       line.startsWith('数据更新时间：') ? line.replace('数据更新时间：','观测时间：').replace('（上游obsTime）','') : line).join('\n');
 }
-function sceneWeather(scene, manual = false, changed = false) {
+function sceneWeather(scene, manual = false, changed = false, silent = false) {
   const now = Date.now(), result = $.weather.result;
   const preview = manual || /(?:^|&)preview=1(?:&|$)/.test(typeof $argument === 'string' ? $argument : '');
   const diagnostic = preview ? capabilitySummary($.weather, now) + '\n' + ($.budgetText || '') + '\n' : '';
-  if (($.read('scenes') || {})[scene] === false && !preview) return;
+  silent = silent || !preview && (scene === 'night' || ($.read('scenes') || {})[scene] === false);
   const server = Number($.weather.server_time) * 1000;
   const stale = Number.isFinite(server) && server > 0 && (now - server > 3600000 || server - now > 300000);
   const warnings = stale ? null : activeWarnings(now), alert = warningSummary(warnings, preview);
   const footer = preview ? weatherTimes($.weather, $.queriedAt, now) : notificationFooter($.weather, $.queriedAt, now);
-  if (scene === 'noon') {
-    if (alert.fresh.length || preview || changed) $.notify('☀️午间天气' + (preview ? ' · 预览' : ''), preview ? '午间预览（不写去重状态）' : changed ? '可信天气明显变化' : '午间官方预警更新', `${alert.text}\n${changed ? '可信观测较上次变化≥5°C或雨雪状态改变；请留意出行。\n' : ''}${diagnostic}\n${footer}`);
+  if (silent && !preview) {
+    if (alert.fresh.length || changed) $.notify('⚠️通勤天气提醒', alert.fresh.length ? '官方预警更新 · 留意通勤安全' : '可信天气明显变化 · 通勤参考', `${alert.text}\n${changed ? '可信观测较上次变化≥5°C或雨雪状态改变；通勤外出留意天气，酌情带伞添衣（生活建议，非官方预警）。\n' : ''}\n${footer}`);
     return;
   }
   const today = shanghaiDate(now);
@@ -473,9 +473,9 @@ function sceneWeather(scene, manual = false, changed = false) {
   });
   const hourlyText = hours.length ? hours.join('\n') : '逐小时温度/天气不可用（缺数据或权限）';
   let body = `${range}\n${rain}\n\n${hourlyText}`;
-  if (scene === 'evening') {
+  if (scene === 'morning' || scene === 'evening' || scene === 'noon') {
     const change = temperatures.length > 1 ? `未来3小时：${displayTemperature(temperatures[0].value)} → ${displayTemperature(temperatures[temperatures.length-1].value)}°C（${trend}；已提供时段）` : '未来3小时温度趋势不可用（缺数据或权限）';
-    body = `${change}\n${rain}\n\n${hourlyText}`;
+    body = `${scene === 'morning' ? range + '\n' : ''}${change}\n${rain}\n${trend === '降温' ? '降温，酌情添衣' : temperatures.length > 1 ? '按体感调整衣着' : '温度趋势不足，无法据此判断添衣'}\n\n${hourlyText}`;
   }
   if (scene === 'night') {
     const tomorrow = shanghaiDate(now + 86400000);
@@ -493,9 +493,9 @@ function sceneWeather(scene, manual = false, changed = false) {
   if (permissions) body += '\n' + permissions + '（未知）';
   const city = $.address && $.address.city;
   const safeCity = typeof city === 'string' && city !== '当前位置' && /^[\u3400-\u9fffA-Za-z· ]{2,24}$/.test(city) ? ' · ' + city : '';
-  const title = {morning:'🌤今日天气',evening:'🌆返程天气',night:'🌙明日天气'}[scene] + safeCity + (preview ? ' · 预览' : '');
+  const title = {morning:'🌅上班通勤',noon:'☀️午间外出',evening:'🌆下班通勤',night:'🌙明日天气'}[scene] + safeCity + (preview ? ' · 预览' : '');
   const subtitle = stale ? '数据陈旧或时间异常 · 预报已降级' : warnings && warnings.length ? '官方预警 · 请留意出行' :
-    {morning:'今天出门 · ' + advice,evening:trend + ' · ' + advice,night:'明日预报 · 同口径温差'}[scene];
+    {morning:'今天出门 · ' + trend + ' · ' + advice,noon:'午间通勤/外出参考 · ' + trend + ' · ' + advice,evening:trend + ' · ' + advice,night:'明日预报 · 同口径温差'}[scene];
   const warningTop = warnings && warnings.length ? alert.text + '\n\n' : '';
   $.notify(title, subtitle, `${warningTop}${body}${warningTop ? '' : '\n' + alert.text}\n\n${preview ? '手动预览（不写去重状态）\n' + diagnostic : ''}${footer}`);
 }
