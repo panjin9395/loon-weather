@@ -3,7 +3,7 @@
  * Does not distinguish current location from saved Weather app cities.
  */
 (function () {
-  const VERSION = 'location-v2';
+  const VERSION = 'location-v2-3km';
   const load = key => { try { return JSON.parse($persistentStore.read(key) || '{}'); } catch (_) { return {}; } };
   const stamp = () => new Date().toISOString();
   const safePath = url => {
@@ -62,8 +62,23 @@
       }
     }
     const old = settings.location || {};
-    const first = old.latitude === undefined || old.longitude === undefined ||
-      String(old.latitude).trim() === '' || String(old.longitude).trim() === '';
+    const valid = p => p && [p.latitude, p.longitude].every(v =>
+      (typeof v === 'string' && v.trim() !== '' || typeof v === 'number') && Number.isFinite(Number(v))) &&
+      Math.abs(Number(p.latitude)) <= 90 && Math.abs(Number(p.longitude)) <= 180;
+    const first = !valid(old);
+    if (!first) {
+      // Great-circle distance from the saved anchor, not the last observed request.
+      const rad = x => x * Math.PI / 180;
+      const a = Math.sin(rad(lat - Number(old.latitude)) / 2) ** 2 +
+        Math.cos(rad(lat)) * Math.cos(rad(Number(old.latitude))) *
+        Math.sin(rad(lon - Number(old.longitude)) / 2) ** 2;
+      const km = 6371.0088 * 2 * Math.atan2(Math.sqrt(Math.min(1, a)), Math.sqrt(Math.max(0, 1 - a)));
+      if (km <= 3 + 1e-9) {
+        record('距保存位置不超过3km，沿用本地定位');
+        say('沿用本地定位（3km范围内）');
+        return;
+      }
+    }
     settings.location = { latitude: String(lat), longitude: String(lon) };
     settings.location_updated = Date.now();
     if (!$persistentStore.write(JSON.stringify(settings), 'caiyun')) throw new Error('本地写入失败');

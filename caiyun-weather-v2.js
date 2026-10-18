@@ -112,7 +112,7 @@ if (typeof $request !== "undefined") {
             "open-url": "https://t.me/cool_scripts",
           }
         );
-      else $.notify("[彩云天气]", "❌ 出现错误", JSON.stringify(err, Object.getOwnPropertyNames(err)));
+      else $.notify("[彩云天气]", "❌ 天气查询失败", "请检查网络、令牌权限或已保存经纬度。本次未使用旧天气；位置设置仍保留。为保护隐私，不展示原始接口错误。");
     })
     .finally(() => $.done());
 }
@@ -133,26 +133,27 @@ async function scheduler() {
 async function query() {
   const location = $.read("location") || {};
   // Privacy: do not print coordinates.
-  const isNumeric = (input) => input && !isNaN(input);
+  const isNumeric = input => (typeof input === 'number' || typeof input === 'string' && input.trim() !== '') && Number.isFinite(Number(input));
   if (!isNumeric(location.latitude) || !isNumeric(location.longitude)) {
     throw new Error("❌ 经纬度设置错误！");
   }
 
-  if (Number(location.latitude) > 90 || Number(location.longitude) > 180) {
-    throw new Error(
-      "🤖 地理小课堂：经度的范围是0~180，纬度是0~90哦。请仔细检查经纬度是否设置正确。"
-    );
+  if (Math.abs(Number(location.latitude)) > 90 || Math.abs(Number(location.longitude)) > 180) {
+    throw new Error("❌ 经纬度设置错误，请重新获取有效定位。");
   }
   // query API
   const url = `https://api.caiyunapp.com/v2.5/${$.read("token").caiyun}/${$.read("location").longitude
     },${$.read("location").latitude
     }/weather?lang=zh_CN&dailystart=0&hourlysteps=384&dailysteps=16&alert=true`;
 
+  $.queriedAt = Date.now();
   $.log("Query weather...");
 
   const weather = await $.http.get({
     url,
     headers: {
+      "Cache-Control": "no-cache, no-store",
+      "Pragma": "no-cache",
       "User-Agent": "ColorfulCloudsPro/5.0.10 (iPhone; iOS 14.0; Scale/3.00)",
     },
   })
@@ -211,6 +212,28 @@ function weatherAlert() {
   }
 }
 
+function weatherTimes(weather, queriedAt, generatedAt) {
+  const shift = Number.isFinite(weather.tzshift) ? weather.tzshift : 28800;
+  const format = ms => new Date(ms + shift * 1000).toISOString().slice(0, 16).replace('T', ' ') +
+    ' UTC' + (shift >= 0 ? '+' : '-') + String(Math.floor(Math.abs(shift) / 3600)).padStart(2, '0') + ':' + String(Math.floor(Math.abs(shift) % 3600 / 60)).padStart(2, '0');
+  // Only explicit observation timestamps count as data time. server_time is NOT observation time.
+  const raw = weather.result.realtime.obsTime;
+  const observed = typeof raw === 'string' && /T.*(?:Z|[+-]\d{2}:?\d{2})$/.test(raw) ? Date.parse(raw) : NaN;
+  let data = '数据更新时间：未知（上游未提供可验证的观测时间，无法判断新鲜度）';
+  if (Number.isFinite(observed)) {
+    const age = generatedAt - observed;
+    data = '数据更新时间：' + format(observed) + '（上游obsTime）';
+    if (age > 60 * 60 * 1000) data += '\n⚠️ 数据陈旧：距观测' + Math.floor(age / 60000) + '分钟（阈值60分钟）';
+    if (age < -5 * 60 * 1000) data += '\n⚠️ 数据时间异常：晚于本次查询，请检查上游时间';
+  }
+  const server = Number(weather.server_time);
+  if (Number.isFinite(server) && server > 0) {
+    data += '\n接口响应时间：' + format(server * 1000) + '（非观测时间）';
+    if (generatedAt - server * 1000 > 3600000) data += '\n⚠️ 接口响应陈旧：可能为上游或HTTP缓存，不能当实时数据';
+  }
+  return data + '\n查询时间：' + format(queriedAt) + '\n通知生成时间：' + format(generatedAt);
+}
+
 function realtimeWeather() {
   const data = $.weather.result;
   const address = $.address;
@@ -244,10 +267,10 @@ function realtimeWeather() {
   }
 
   $.notify(
-    `[彩云天气] ${address.city} ${address.district} ${address.street}`,
+    `[彩云天气 时间核验版] ${address.city} ${address.district} ${address.street}`,
     `${mapSkycon(realtime.skycon)[0]} ${realtime.temperature} ℃  🌤 空气质量 ${realtime.air_quality.description.chn
     }`,
-    `🔱 ${keypoint}
+    `🕒 ${weatherTimes($.weather, $.queriedAt, Date.now())}\n🔱 ${keypoint}
 🌡 体感${realtime.life_index.comfort.desc} ${realtime.apparent_temperature
     } ℃  💧 湿度 ${(realtime.humidity * 100).toFixed(0)}%
 🌞 紫外线 ${realtime.life_index.ultraviolet.desc} 💨 ${mapWind(
