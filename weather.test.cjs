@@ -19,12 +19,13 @@ const fixture=()=>({status:'ok',tzshift:28800,server_time:NOW/1000,result:{
  realtime:{skycon:'CLOUDY',temperature:20,humidity:0.8,apparent_temperature:20,air_quality:{description:{chn:'优'}},life_index:{comfort:{desc:'舒适'},ultraviolet:{desc:'弱'}},wind:{speed:2,direction:0}},
  hourly:{skycon:[]},forecast_keypoint:'fixture'
 }});
-async function weather(store,body=fixture(),failure=false){
+async function weather(store,body=fixture(),failure=false,options={}){
  const notices=[],logs=[],requests=[];
- class Clock extends Date{constructor(...a){super(...(a.length?a:[NOW]));}static now(){return NOW;}}
+ const clock=options.now ?? NOW;
+ class Clock extends Date{constructor(...a){super(...(a.length?a:[clock]));}static now(){return clock;}}
  let complete;const finished=new Promise(r=>complete=r);
  vm.runInNewContext(fs.readFileSync('caiyun-weather-v2.js','utf8'),{
-  Date:Clock,$loon:{},$persistentStore:{read:k=>store[k],write:(v,k)=>(store[k]=v,true)},
+  Date:Clock,$argument:options.argument || '',$loon:{},$persistentStore:{read:k=>store[k],write:(v,k)=>(store[k]=v,true)},
   $httpClient:{get:(o,cb)=>{requests.push(o);failure?cb(failure):cb(null,{status:200},JSON.stringify(body));}},
   $notification:{post:(...a)=>notices.push(a)},$done:complete,console:{log:s=>logs.push(s)},setTimeout,clearTimeout
  });await finished;return {notices,logs,requests,text:notices.flat().join('\n')};
