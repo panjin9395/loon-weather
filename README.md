@@ -52,14 +52,23 @@ Therefore this repository's inspected version cannot generate the pictured card.
 
 手机只需**更新一次现有插件，再刷新/清除该插件的远程脚本缓存**，保持同一 URL。MITM 域名、全局网络规则、位置捕获脚本与 3 km 锚点均未改。确认脚本任务变成上述四个场景后，可点手动测试预览。服务器不读取用户 Token 或坐标。
 
+### 购买后一次手机手动核验
+
+更新原插件并刷新远程脚本缓存后，点现有 **彩云天气手动测试** 一次即可；无需新增任务、权限或 MITM。所有手动场景预览都会附上「能力摘要（本次响应，非购买凭证）」：实况、逐小时、逐日、预警分别为可用、当前无有效预警、缺权限（未知）或结构异常（未知）。摘要只输出固定文案，不输出原响应、URL、令牌、经纬度；不额外请求天气、不消费正式预警去重。缺字段本身不证明缺权限；逐小时/逐日可用指本次温度序列通过结构检查，不代表所有变量或新鲜度都可用。网络失败仍显示脱敏查询失败。
+
+- `alert.status=ok` 且 `content=[]` 正常表示本次当前无有效预警，不是程序错误，也不保证当地无预警。官方明确的例外 `content=[]` 且 `adcodes=null` 是上游异常，仍保留未知；缺块、缺字段、denied 也不能当无预警。此前代码已正确区分普通空数组与缺块，这次修复的是 `adcodes=null` 例外，不能凭截图推断手机实际走了哪条分支。
+- [官方实况字段](https://docs.caiyunapp.com/weather-api/v2/v2.6/1-realtime.html)没有可验证的观测时间，因此「数据更新时间：未知」通常是正确结果；`server_time` 只是服务器时间，不能伪装成观测时间。
+- 当前使用手机本地 `token.caiyun` 的 **v2.6 综合 weather**，经度在前，参数为 `lang=zh_CN&dailystart=0&hourlysteps=24&dailysteps=3&alert=true`；不是 v3，也未改成 App Key/Secret 签名认证。若应用强制签名，现有 token 模式不能据购买自动兼容。
+- 已购买 25 元/万次不证明手机里该令牌的权限已生效；如平台仍显示旧额度，需在平台本地核对套餐与应用绑定是否对应当前使用的应用。无需分享令牌、密钥、坐标或包含秘密的截图。**服务器未读取或调用真实付费令牌，购买生效与真机结果尚待这一次手机运行核验。**
+
 ## Verification
 
 ```sh
-node --test scenes.test.cjs
-TZ=America/Los_Angeles node --test scenes.test.cjs
+node --test capabilities.test.cjs
+TZ=America/Los_Angeles node --test capabilities.test.cjs
 ```
 
-`scenes.test.cjs` 导入并执行原 `weather.test.cjs` 的全部回归测试；因此单跑前者就是完整套件，不需重复运行两文件来人为扩大计数。测试使用 Node VM 执行真实 Loon 脚本，HTTP 和持久化边界由显式 synthetic fixture 提供，没有调用用户天气 API。覆盖四场景、3 km、预警去重/升级/失效、手动不消耗、权限与 0 概率、5°C 边界、缺明日、跨日期与宿主 DST、陈旧时间、网络隐私和缓存指令。新行为先红测试再实现，概率单位通过官方文档校正为 0–100%。
+`capabilities.test.cjs` 导入 `scenes.test.cjs`，后者再导入 `weather.test.cjs`；单跑 capabilities 就是完整套件，不重复运行文件来扩大计数。新增普通空预警、上游异常 adcodes=null、缺字段/denied、失败响应摘要、四场景手动诊断和请求 endpoint 参数检查。测试使用 Node VM 执行真实 Loon 脚本，HTTP 和持久化边界由显式 synthetic fixture 提供，没有调用用户天气 API。覆盖四场景、3 km、预警去重/升级/失效、手动不消耗、权限与 0 概率、5°C 边界、缺明日、跨日期与宿主 DST、陈旧时间、网络隐私和缓存指令。新行为先红测试再实现，概率单位通过官方文档校正为 0–100%。
 
 **尚未真机验收**：无法在本环境确认 Loon/iOS 实际定时投递、系统通知权限和个人 Token 权限；这些不是 Node fixture 测试能证明的。
 

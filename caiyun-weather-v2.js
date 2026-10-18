@@ -105,6 +105,12 @@ if (typeof $request !== "undefined") {
   })()
     .catch((err) => {
       if (typeof $argument === 'string' && /(?:^|&)scene=noon(?:&|$)/.test($argument) && !/(?:^|&)preview=1(?:&|$)/.test($argument)) return;
+      const arg = typeof $argument === 'string' ? $argument : '';
+      const manual = /(?:^|&)preview=1(?:&|$)/.test(arg) || !/(?:^|&)scene=(morning|noon|evening|night)(?:&|$)/.test(arg);
+      if (manual && $.diagnosticWeather) {
+        $.notify('[彩云天气 时间核验版]', '手动能力诊断（天气查询失败）', capabilitySummary($.diagnosticWeather, Date.now()) + '\n本次未使用旧天气；未展示原始接口错误。');
+        return;
+      }
       if (err instanceof ERR.TokenError)
         $.notify(
           "[彩云天气]",
@@ -163,7 +169,8 @@ async function query() {
   })
     .then((resp) => {
       const body = JSON.parse(resp.body);
-      if (body.status !== "ok" || !body.result || !body.result.realtime) {
+      $.diagnosticWeather = body && typeof body === 'object' ? body : {};
+      if (!body || body.status !== "ok" || !body.result || !body.result.realtime) {
         throw new Error("彩云接口未返回可用实时天气，请检查Token权限与接口响应");
       }
       return body;
@@ -193,9 +200,9 @@ async function query() {
 }
 
 // Only official API records, with an identity, active status and explicit validity.
-function activeWarnings(now) {
-  const data = $.weather.result.alert;
-  if (!data || data.status !== 'ok' || !Array.isArray(data.content)) return null;
+function activeWarnings(now, weather = $.weather) {
+  const data = weather.result.alert;
+  if (!data || data.status !== 'ok' || !Array.isArray(data.content) || data.content.length === 0 && data.adcodes === null) return null;
   return data.content.filter(a => a && typeof a.alertId === 'string' && a.alertId &&
     ['预警中','alerting'].includes(a.status) && (a.request_status === undefined || a.request_status === 'ok') && typeof a.title === 'string' && typeof a.description === 'string' &&
     /^\d{4}$/.test(a.code) && Number.isFinite(a.pubtimestamp) && a.pubtimestamp * 1000 <= now + 300000 &&
@@ -292,15 +299,35 @@ function forecastTemp(daily, day) {
     /T.*(?:Z|[+-]\d{2}:?\d{2})$/.test(x.date) && shanghaiDate(Date.parse(x.date)) === day &&
     Number.isFinite(x.min) && Number.isFinite(x.max) && x.min <= x.max);
 }
+// Fixed-label diagnostics only: never echo upstream strings, URLs or locations.
+function capabilitySummary(weather, now) {
+  const result = weather.result || {};
+  const denied = x => x && ['denied', 'permission_denied', 'forbidden'].includes(x.status);
+  const state = (block, valid) => denied(weather) || denied(block) ? '缺权限（未知）' :
+    weather.status !== 'ok' || !block || block.status !== 'ok' || !valid(block) ? '结构异常（未知；缺字段不等于缺权限）' : '可用';
+  const dated = (rows, key, valid) => Array.isArray(rows) && rows.length > 0 && rows.every(x => x &&
+    typeof x[key] === 'string' && /T.*(?:Z|[+-]\d{2}:?\d{2})$/.test(x[key]) && Number.isFinite(Date.parse(x[key])) && valid(x));
+  const temperature = b => dated(b.temperature, 'datetime', x => Number.isFinite(x.value));
+  const daily = b => dated(b.temperature, 'date', x => Number.isFinite(x.min) && Number.isFinite(x.max) && x.min <= x.max);
+  let alert = state(result.alert, b => Array.isArray(b.content) && !(b.content.length === 0 && b.adcodes === null));
+  if (alert === '可用') {
+    const warnings = activeWarnings(now, weather);
+    if (result.alert.content.length === 0) alert = '当前无有效预警（本次API，不保证当地无预警）';
+    else if (!warnings.length) alert = '结构异常（未知；记录未通过有效性校验）';
+  }
+  return '能力摘要（本次响应，非购买凭证）\n实况：' + state(result.realtime, b => Number.isFinite(b.temperature) && typeof b.skycon === 'string' && !!mapSkycon(b.skycon)) +
+    '\n逐小时：' + state(result.hourly, temperature) + '\n逐日：' + state(result.daily, daily) + '\n预警：' + alert;
+}
 function sceneWeather(scene, manual = false) {
   const now = Date.now(), result = $.weather.result;
   const preview = manual || /(?:^|&)preview=1(?:&|$)/.test(typeof $argument === 'string' ? $argument : '');
+  const diagnostic = preview ? capabilitySummary($.weather, now) + '\n' : '';
   if (($.read('scenes') || {})[scene] === false && !preview) return;
   const server = Number($.weather.server_time) * 1000;
   const stale = Number.isFinite(server) && server > 0 && (now - server > 3600000 || server - now > 300000);
   const warnings = stale ? null : activeWarnings(now), alert = warningSummary(warnings, preview);
   if (scene === 'noon') {
-    if (alert.fresh.length || preview) $.notify('[彩云天气 时间核验版]', preview ? '午间预览（不写去重状态）' : '午间官方预警更新', `${alert.text}\n${alert.fresh.map(a => a.description).join('\n')}\n${weatherTimes($.weather, $.queriedAt, now)}`);
+    if (alert.fresh.length || preview) $.notify('[彩云天气 时间核验版]', preview ? '午间预览（不写去重状态）' : '午间官方预警更新', `${diagnostic}${alert.text}\n${alert.fresh.map(a => a.description).join('\n')}\n${weatherTimes($.weather, $.queriedAt, now)}`);
     return;
   }
   const today = shanghaiDate(now);
@@ -335,7 +362,7 @@ function sceneWeather(scene, manual = false) {
     } else body += '\n缺同口径日温度，无法比较升降温';
   }
   if (stale) body = '⚠️ 预报已降级：接口响应陈旧或时间异常，不生成出行/温差建议。';
-  $.notify('[彩云天气 时间核验版]', {morning:'今天出门',evening:'回家/出行',night:'明日预报'}[scene], `${preview ? '手动预览（不写去重状态）\n' : ''}${body}\n${alert.text}\n${weatherTimes($.weather, $.queriedAt, now)}`);
+  $.notify('[彩云天气 时间核验版]', {morning:'今天出门',evening:'回家/出行',night:'明日预报'}[scene], `${preview ? '手动预览（不写去重状态）\n' : ''}${diagnostic}${body}\n${alert.text}\n${weatherTimes($.weather, $.queriedAt, now)}`);
 }
 
 function dailyForcast() { }
