@@ -1,0 +1,16 @@
+WeatherKit 中文选项独立二改
+
+Based on NSRingo/WeatherKit v3.3.2
+Source: https://github.com/NSRingo/WeatherKit/tree/c40e8f8a13c8304a7ef500cb74acc5948af14b3f
+Official authors: VirgilClyne, WordlessEcho, 001 (001ProMax), hhh2210.
+License: Apache License 2.0 (included as LICENSE).
+Upstream contains no separate NOTICE file at this tag.
+
+Modifications by panjin9395:
+- Chinese visible select values in WeatherKit.zh.lpx.
+- Prefix argument-adapter.js before byte-identical official request/response bundles.
+- Pin v3.3.2 distribution bytes and add offline build/tests/documentation.
+No upstream endorsement is implied. Original authorship and functionality retained.
+The generated *.zh.bundle.js files are modified distributions; their leading comment
+identifies the added adapter. The remainder is unchanged official release code.
+This notice/license applies to this directory, not the unrelated weather notification files.
