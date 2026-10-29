@@ -1,4 +1,4 @@
-# Loon 彩云天气：全天检查，少打扰（2026.10-commute-air.1）
+# Loon 彩云天气：全天检查，少打扰（2026.10-frontier.1）
 
 原插件 URL 不变：
 https://raw.githubusercontent.com/panjin9395/loon-weather/main/CaiyunWeather.plugin
@@ -55,19 +55,20 @@ Loon本地存储没有跨脚本进程原子CAS/锁，先写读回不能保证同
 
 官方预警要求status=ok、有效id/code/发布时间、alerting/预警中、无拒绝/解除/过期记录；按最多200版本保存去重。`content=[]`仅代表本次API无有效记录，不保证当地无预警；缺块、denied、`content=[] && adcodes=null`均未知。概率单位0–100%，缺失不是0。接口陈旧或时间异常不生成预测建议/预警提醒。
 
-## 本次仅增强通勤显示
+## 本次更新：官方预警、低噪失败、三次体感摘要
 
-- 三摘要复用同一次综合响应，新增紧凑一行如 `空气优 国标AQI 25 · 西南风3级`。只读 `aqi.chn` / `description.chn`，0有效；缺失、非法或拒绝权限不填默认值，美标不冒充国标。描述与国标数值等级矛盾时仅保留数值。
-- 默认metric/metric:v1/metric:v2风速是km/h，按官方m/s连续边界换算风级；风向为从北顺时针16方位，恰好半边界归前一方位；未识别单位/无有效方向不猜。此脚本未请求SI或英制，意外收到时省略风行。
-- 实况UV index≥7且≤11才突出防晒（不混用逐日0–5等级）；湿度≥90%仅在已达到原带伞阈值或风≥6级时突出。普通湿度/弱UV、PM2.5/PM10、日出日落不堆入通勤卡。
-- 官方预警仍置顶，通勤建议在前、空气风况在后、小时详情/时间页脚最后；未知观测时间统一保留，空气数值不等于已验证新鲜。温度建议、全天24+3预算、3km锚点、5°C变化、预警去重及所有cron均未更改。无新增API或坐标上传，旧今日天气已由用户禁用，本次不操作它。
-- 合成样本和生成脚本见 `preview/commute-details-fixtures.txt` / `commute-details-examples.cjs`；不是实测空气或真机通知。
+- 预警类型/等级仍按官方 code 表，补齐白色及17/18类；展示发布地区与北京时间、优先节选含防范提示的官方原句（最多100字）。最多展开3条，其他计数保留，所有记录仍按原键去重；持续预警保留摘要，手动不吞正式状态。
+- 原文先去HTML/脚本/链接、实体、控制及双向字符再截断；无可展示中文原文显未知，不编造官方防范。与“本地出行建议（非官方预警）”明确分段。v2网格可能返回邻区，明确提示核对地区，不用地名/坐标猜定本地一致。官方常规响应**没有 expire_time**，不假设存在过期时间；原有可选明确失效字段过滤不变。
+- 独立本机 `caiyun_health_v1` 仅保存连续失败数、固定分类和已提醒日期，不含令牌/坐标/接口原文。网络连续3次失败，或认证配置/明确认证失败、本地预算不足、额度/限流/权限未知，在07:30/12:00/17:00固定摘要时每天最多提示一次；其他自动时段静默，成功恢复复位。手动仍给即时诊断但不消费正式提示日标记；不重试、不额外请求。401/403不猜令牌过期，429不等同认证失败；HTML错误页也按HTTP状态保守分类。局部块权限仍由原能力降级文字展示，不新增第二张卡。
+- 删除旧Telegram共享令牌引导，改为[彩云官方开放平台](https://platform.caiyunapp.com/)申请个人凭证并核实v2.6综合/预警权限。预警是增值服务，免费赠送额度不含；缺字段不等于已证实缺权限。本次不引入新鉴权协议，也不读取任何真实凭证。
+- 07:30/12:00/17:00摘要复用同一次综合响应，固定一行：`体感20°C · 湿度80% · 紫外线3（弱）`。体感公制摄氏度；湿度0–1乘100；UV用实况0–11官方等级，不混用逐日0–5。缺失/无效/拒绝显“未知”，零有效。体感≤5°C/≥35°C仅本地标偏冷/热，原强UV防晒、高湿遇雨/强风突出保留，非官方预警。陈旧接口仍整卡降级，不输出新建议。
+- 上版国标AQI、风级及全部天气功能保留；全天24基础slot、共享机动3、预约预算、请求URL、cron、MITM、3km定位、5°C变化与冷却/去重均不变。`weatherkit-zh/`独立苹果天气增强完全未动，作者/许可保留。
 
 ## 手机更新步骤（一次）
 
-本次从 `2026.10-allday.1` 升级：只在Loon刷新原URL的 **caiyun-weather-v2.js 天气脚本缓存一次**，不需要更换插件/定位脚本、不改cron/Token/quota、不重新禁用旧脚本，不要求截图或新app。下列是完整安装/迁移说明，不是本次额外步骤：
+本次从 `2026.10-commute-air.1` 升级：一次更新原插件并刷新远程脚本缓存（天气/定位两个v2入口），不另建副本、不改cron/Token/quota、不重新禁用旧脚本、不需要新app。定位脚本代码未变。完整步骤：
 
-1. 在Loon更新**原URL插件**，不要另建副本；版本应为 `2026.10-commute-air.1`。
+1. 在Loon更新**原URL插件**，不要另建副本；版本应为 `2026.10-frontier.1`。
 2. 同次操作刷新/清除该插件的远程脚本缓存，天气和定位两个v2脚本都需更新。不动手机现有Token、定位和quota，不需要新app。
 3. 检查只剩两条基础cron（上面的全天整点+07:30）及一条条件机动cron；删除旧白天半点基础任务及旧独立场景任务。时区保持Asia/Shanghai。
 4. 可运行「彩云天气手动测试」一次看能力摘要/本地预算。会消耗一次共享机动，不影响正式通知去重。无须每天更新。
@@ -79,11 +80,11 @@ Loon本地存储没有跨脚本进程原子CAS/锁，先写读回不能保证同
 ## 验证
 
 ```sh
-node --test all-day.test.cjs
-node --test commute-details.test.cjs
-TZ=America/Los_Angeles node --test all-day.test.cjs
+node --test frontier.test.cjs
+TZ=America/Los_Angeles node --test frontier.test.cjs
+git diff --check
 ```
 
-all-day导入commute→notification→budget→capabilities→scenes→weather，单入口不重复计数。覆盖全天24slot、三摘要、预算/失败/隐私/机动、4.9/5°C与方向/冷却、预报转雨雪/概率变化与unknown、缺观测独立预报、跨午夜/时区、位置重置、手动不吞正式状态及官方预警升级。先红后绿，不代表真机iOS必达/全天运行/计费权限验收。
+frontier→commute-details→all-day导入commute→notification→budget→capabilities→scenes→weather，单入口不重复计数。本次另覆盖原文清洗/防范节选/边界提示、HTTP错误分类与失败恢复、固定摘要单位/未知、预览不消费正式提示。覆盖全天24slot、三摘要、预算/失败/隐私/机动、4.9/5°C与方向/冷却、预报转雨雪/概率变化与unknown、缺观测独立预报、跨午夜/时区、位置重置、手动不吞正式状态及官方预警升级。先红后绿，不代表真机iOS必达/全天运行/计费权限验收。
 
 References: [realtime fields](https://docs.caiyunapp.com/weather-api/v2/v2.6/1-realtime.html), [units](https://docs.caiyunapp.com/weather-api/v2/v2.6/tables/unit.html), [wind](https://docs.caiyunapp.com/weather-api/v2/v2.6/tables/wind.html), [life index](https://docs.caiyunapp.com/weather-api/v2/v2.6/tables/lifeindex.html), [hourly schema](https://docs.caiyunapp.com/weather-api/v2/v2.6/3-hourly.html), [alerts](https://docs.caiyunapp.com/en/weather-api/v2/v2.6/5-alert.html), [Loon arguments](https://nsloon.app/en/docs/Script).

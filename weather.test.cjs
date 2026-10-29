@@ -26,7 +26,7 @@ async function weather(store,body=fixture(),failure=false,options={}){
  let complete;const finished=new Promise(r=>complete=r);
  vm.runInNewContext(fs.readFileSync('caiyun-weather-v2.js','utf8'),{
   Date:Clock,$argument:options.argument || '',$loon:{},$persistentStore:{read:k=>store[k],write:(v,k)=>options.failBudgetWrite && k==='caiyun_budget_v1' ? false : (store[k]=v,true)},
-  $httpClient:{get:(o,cb)=>{requests.push(o);failure?cb(failure):cb(null,{status:200},JSON.stringify(body));}},
+  $httpClient:{get:(o,cb)=>{requests.push(o);failure?cb(failure):cb(null,{status:options.statusCode || 200},options.rawBody ? body : JSON.stringify(body));}},
   $notification:{post:(...a)=>notices.push(a)},$done:complete,console:{log:s=>logs.push(s)},setTimeout,clearTimeout
  });await finished;return {notices,logs,requests,text:notices.flat().join('\n')};
 }

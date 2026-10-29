@@ -1,4 +1,4 @@
-// Release 2026.10-commute-air.1. Based on Peng-YM caiyun.js; author credit retained.
+// Release 2026.10-frontier.1. Based on Peng-YM caiyun.js; author credit retained.
 /**
 彩云天气 v0.1 alpha
 @author: Peng-YM
@@ -104,6 +104,7 @@ if (typeof $request !== "undefined") {
     }
   })()
     .catch((err) => {
+      recordFailure(err instanceof ERR.TokenError ? '认证配置' : $.failureKind || '网络/服务未知');
       if (backgroundQuiet()) return;
       if (typeof $argument === 'string' && /(?:^|&)scene=noon(?:&|$)/.test($argument) && !/(?:^|&)preview=1(?:&|$)/.test($argument)) return;
       const arg = typeof $argument === 'string' ? $argument : '';
@@ -116,9 +117,9 @@ if (typeof $request !== "undefined") {
         $.notify(
           "[彩云天气]",
           err.message,
-          "🤖 由于API Token具有时效性，请前往\nhttps://t.me/cool_scripts\n获取最新Token。",
+          "请到彩云官方开放平台申请个人凭证，并确认 v2.6 综合天气及预警权限；预警属于增值服务。凭证仅保存在本机 BoxJS，勿公开。",
           {
-            "open-url": "https://t.me/cool_scripts",
+            "open-url": "https://platform.caiyunapp.com/",
           }
         );
       else $.notify("[彩云天气]", "❌ 天气查询失败", "请检查网络、令牌权限或已保存经纬度。本次未使用旧天气；位置设置仍保留。为保护隐私，不展示原始接口错误。");
@@ -126,6 +127,34 @@ if (typeof $request !== "undefined") {
     .finally(() => $.done());
 }
 
+// Phone-local health ledger: fixed labels only, no upstream messages or location.
+function healthState() {
+  try { const s=JSON.parse($.read('#caiyun_health_v1') || '{}'); return s && typeof s==='object' ? s : {}; } catch (_) { return {}; }
+}
+function recordFailure(kind) {
+  const state=healthState();
+  state.streak=(Number.isSafeInteger(state.streak) ? state.streak : 0)+1;
+  state.kind=kind;
+  const arg=typeof $argument==='string' ? $argument : '';
+  const time=new Date(Date.now()+28800000).toISOString().slice(11,16);
+  const fixed=['07:30','12:00','17:00'].includes(time) &&
+    (/(?:^|&)mode=base(?:&|$)/.test(arg) || /(?:^|&)scene=(morning|noon|evening)(?:&|$)/.test(arg));
+  const preview=/(?:^|&)preview=1(?:&|$)/.test(arg);
+  const day=shanghaiDate(Date.now());
+  if (fixed && !preview && state.notifiedDay!==day && (state.streak>=3 || /预算|认证|额度|限流|权限/.test(kind))) {
+    state.notifiedDay=day;
+    $.notify('⚠️彩云天气服务提示',kind+' · 连续失败'+state.streak+'次',
+      '本次未取得可用天气；不使用旧天气。请检查网络、本机预算或彩云官方开放平台的个人凭证、额度与权限。429可能是额度或限流，并不代表令牌失效。每日最多一次，恢复后复位。');
+  }
+  $.write(JSON.stringify(state),'#caiyun_health_v1');
+}
+function classifyFailure(code, body) {
+  const error=body && typeof body.error==='string' ? body.error.trim().toLowerCase() : '';
+  if (error==='token is invalid' || error==='token disabled') return '认证失败';
+  if (code===401 || code===403) return '权限/访问限制未知';
+  if (code===429) return /quota|credit|balance|额度/.test(error) ? '额度不足' : '额度/限流未知';
+  return '响应/权限未知';
+}
 function backgroundQuiet() {
   const a=typeof $argument === 'string' ? $argument : '';
   return /(?:^|&)mode=(base|extra)(?:&|$)/.test(a) && !/(?:^|&)preview=1(?:&|$)/.test(a);
@@ -254,6 +283,7 @@ function reserveAttempt() {
     (priority || formal && limit.cap - state.day.used > futureScenes.length ||
       !formal && state.day.extra < 3 && limit.cap - state.day.used > reserved);
   if (!allowed) {
+    recordFailure('本地预算不足');
     if (c.preview) $.notify('[彩云天气 时间核验版]', '本地估算预算不足', '未请求天气；保留正式场景额度。本地估算不等于平台实际计费。');
     return false;
   }
@@ -324,9 +354,14 @@ async function query() {
     },
   })
     .then((resp) => {
-      const body = JSON.parse(resp.body);
+      let body;
+      try { body=JSON.parse(resp.body); } catch (_) {
+        $.failureKind=classifyFailure(resp.statusCode, null);
+        throw new Error('WEATHER_RESPONSE_UNAVAILABLE');
+      }
       $.diagnosticWeather = body && typeof body === 'object' ? body : {};
-      if (!body || body.status !== "ok" || !body.result || !body.result.realtime) {
+      if (resp.statusCode !== 200 || !body || body.status !== "ok" || !body.result || !body.result.realtime) {
+        $.failureKind=classifyFailure(resp.statusCode,body);
         throw new Error("彩云接口未返回可用实时天气，请检查Token权限与接口响应");
       }
       return body;
@@ -335,6 +370,8 @@ async function query() {
       throw err;
     });
   $.weather = weather;
+  if (!weather.result.realtime.status || weather.result.realtime.status === 'ok') $.write(JSON.stringify({streak:0}),'#caiyun_health_v1');
+  // Partial responses retain existing capability diagnostics; do not add a second card.
   $.alertUnavailable = !weather.result.alert || !Array.isArray(weather.result.alert.content);
 
   // Optional reverse geocoding; never block weather or reuse a stale street.
@@ -365,6 +402,18 @@ function activeWarnings(now, weather = $.weather) {
     /^\d{4}$/.test(a.code) && Number.isFinite(a.pubtimestamp) && a.pubtimestamp * 1000 <= now + 300000 &&
     (a.expiretimestamp === undefined || Number.isFinite(a.expiretimestamp) && a.expiretimestamp * 1000 > now));
 }
+// Display only, never used for warning identity or local advice. Bound before parsing.
+function safeOfficialText(value, limit) {
+  if (typeof value !== 'string') return '';
+  const text = value.slice(0,12000).replace(/<(script|style|a)\b[^>]*>[\s\S]*?<\/\1\s*>/gi,' ')
+    .replace(/<[^>]*>/g,' ').replace(/&(?:#x[0-9a-f]+|#\d+|[a-z]+);/gi,' ')
+    .replace(/(?:[a-z][a-z0-9+.-]*:\/*|www\.)[^\s<>]+/gi,' ')
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069<>]/g,' ')
+    .replace(/\s+/g,' ').trim();
+  // Non-Chinese unstructured payload is not safe localized official guidance.
+  if (!/[\u3400-\u9fff]/.test(text)) return '';
+  return Array.from(text).slice(0,limit).join('') + (Array.from(text).length > limit ? '…' : '');
+}
 function warningSummary(warnings, preview) {
   const seen = $.read('scene_alerts_v1') || [];
   const fresh = (warnings || []).filter(a => !seen.includes(JSON.stringify([a.alertId,a.code,a.pubtimestamp,a.update_time || a.updated || ''])));
@@ -372,10 +421,19 @@ function warningSummary(warnings, preview) {
     const keys = fresh.map(a => JSON.stringify([a.alertId,a.code,a.pubtimestamp,a.update_time || a.updated || '']));
     $.write(seen.concat(keys).slice(-200), 'scene_alerts_v1');
   }
-  const labels = (warnings || []).map(a => {
+  const labels = (warnings || []).slice(0,3).map(a => {
     const label = mapAlertCode(a.code);
-    return label.includes('undefined') ? '官方气象预警（类型/等级未识别）' : label + '预警';
+    const name = label.includes('undefined') ? '官方气象预警（类型/等级未识别）' : label + '预警';
+    const region = safeOfficialText(a.location || [a.province,a.city,a.county].filter(x => x && !['无','none'].includes(x)).join(''), 36);
+    const published = new Date(a.pubtimestamp * 1000 + 28800000).toISOString().slice(5,16).replace('T',' ');
+    const original = safeOfficialText(a.description,12000);
+    const prevention = (original.match(/[^。！？]+[。！？]?/g) || []).find(s => /请|避免|远离|防范|防御|注意|停止|减少|不要/.test(s));
+    const excerpt = safeOfficialText(prevention || original,100);
+    return name + '\n发布地区：' + (region || '未知') + ' · 发布：' + published + '（北京时间）' +
+      (excerpt ? '\n官方原文节选：' + excerpt : '\n官方原文节选：未提供可展示文字');
   });
+  if (warnings && warnings.length > 3) labels.push('另有' + (warnings.length - 3) + '条预警未展开');
+  if (warnings && warnings.length) labels.push('v2边界附近可能含邻区，请核对发布地区。');
   return {fresh, text:warnings === null ? '⚠️ 预警不可用，不能判断是否有预警。' :
     warnings.length ? (fresh.length ? '⚠️ 新增/更新官方预警：' : '⚠️ 持续预警：') + labels.join('；') : '本次未返回有效预警'};
 }
@@ -521,6 +579,17 @@ function commuteDetails(weather, rainRisk) {
   if (Number.isFinite(r.humidity) && r.humidity >= 0.9 && r.humidity <= 1 && (rainRisk || wind && wind.grade >= 6)) highlights.push('高湿' + Math.round(r.humidity * 100) + '%');
   return [parts.join(' · '), highlights.join(' · ')].filter(Boolean).join('\n');
 }
+function comfortSummary(weather) {
+  const r=weather.result.realtime || {}, valid=r.status==='ok';
+  const metric=weather.unit===undefined || ['metric','metric:v1','metric:v2'].includes(weather.unit);
+  const t=valid && metric && Number.isFinite(r.apparent_temperature) && r.apparent_temperature>=-100 && r.apparent_temperature<=80 ? r.apparent_temperature : null;
+  const h=valid && Number.isFinite(r.humidity) && r.humidity>=0 && r.humidity<=1 ? r.humidity : null;
+  const life=r.life_index, uv=valid && life && (!life.status || life.status==='ok') && life.ultraviolet;
+  const u=uv && (!uv.status || uv.status==='ok') && Number.isInteger(uv.index) && uv.index>=0 && uv.index<=11 ? uv.index : null;
+  const label=u===null ? '' : u===0 ? '无' : u<=2 ? '很弱' : u<=4 ? '弱' : u<=6 ? '中等' : u<=9 ? '强' : u<=10 ? '很强' : '极强';
+  return (t===null ? '体感未知' : '体感'+displayTemperature(t)+'°C'+(t>=35?'（偏热）':t<=5?'（偏冷）':'')) +
+    ' · ' + (h===null?'湿度未知':'湿度'+Math.round(h*100)+'%') + ' · ' + (u===null?'紫外线未知':'紫外线'+displayTemperature(u)+'（'+label+'）');
+}
 function sceneWeather(scene, manual = false, changed = false, silent = false) {
   const now = Date.now(), result = $.weather.result;
   const preview = manual || /(?:^|&)preview=1(?:&|$)/.test(typeof $argument === 'string' ? $argument : '');
@@ -560,6 +629,7 @@ function sceneWeather(scene, manual = false, changed = false, silent = false) {
     const change = temperatures.length > 1 ? `未来3小时：${displayTemperature(temperatures[0].value)} → ${displayTemperature(temperatures[temperatures.length-1].value)}°C（${trend}；已提供时段）` : '未来3小时温度趋势不可用（缺数据或权限）';
     const details = !stale ? commuteDetails($.weather, p !== null && p >= (rainThreshold > 0 && rainThreshold <= 100 ? rainThreshold : 40)) : '';
     body = `${scene === 'morning' ? range + '\n' : ''}${change}\n${rain}\n${trend === '降温' ? '降温，酌情添衣' : temperatures.length > 1 ? '按体感调整衣着' : '温度趋势不足，无法据此判断添衣'}${details ? '\n' + details : ''}\n\n${hourlyText}`;
+    body += '\n' + comfortSummary($.weather);
   }
   if (scene === 'night') {
     const tomorrow = shanghaiDate(now + 86400000);
@@ -580,6 +650,7 @@ function sceneWeather(scene, manual = false, changed = false, silent = false) {
   const title = {morning:'🌅上班通勤',noon:'☀️午间外出',evening:'🌆下班通勤',night:'🌙明日天气'}[scene] + safeCity + (preview ? ' · 预览' : '');
   const subtitle = stale ? '数据陈旧或时间异常 · 预报已降级' : warnings && warnings.length ? '官方预警 · 请留意出行' :
     {morning:'今天出门 · ' + trend + ' · ' + advice,noon:'午间通勤/外出参考 · ' + trend + ' · ' + advice,evening:trend + ' · ' + advice,night:'明日预报 · 同口径温差'}[scene];
+  if (warnings && warnings.length) body = '本地出行建议（非官方预警）：\n' + body;
   const warningTop = warnings && warnings.length ? alert.text + '\n\n' : '';
   $.notify(title, subtitle, `${warningTop}${body}${warningTop ? '' : '\n' + alert.text}\n\n${preview ? '手动预览（不写去重状态）\n' + diagnostic : ''}${footer}`);
 }
@@ -606,9 +677,12 @@ function mapAlertCode(code) {
     "14": "❄️ 道路结冰",
     "15": "🔥 森林火灾",
     "16": "⛈ 雷雨大风",
+    "17": "💨 春季沙尘天气趋势",
+    "18": "💨 沙尘",
   };
 
   const intensity = {
+    "00": "白色",
     "01": "蓝色",
     "02": "黄色",
     "03": "橙色",

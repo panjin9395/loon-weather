@@ -39,14 +39,14 @@ test('invalid wind or unsupported units omit wind rather than invent calm or dir
 test('UV only highlights documented strong realtime index at 7, missing invalid or daily-like 4 stays quiet',async()=>{
  for(const [index,show] of [[6.99,false],[7,true],[10,true],[11,true],[0,false],[null,false],['7',false],[undefined,false],[-1,false],[12,false]]){
   const r=await render('noon','12:00',b=>b.result.realtime.life_index.ultraviolet={index,desc:'PRIVATE'});
-  if(show)assert.match(r.text,/紫外线强，注意防晒/);else assert.doesNotMatch(r.text,/紫外线/);assert.doesNotMatch(r.text,/PRIVATE/);
+  if(show)assert.match(r.text,/紫外线强，注意防晒/);else assert.doesNotMatch(r.text,/紫外线强，注意防晒/);assert.doesNotMatch(r.text,/PRIVATE/);
  }
- for(const edit of [b=>delete b.result.realtime.life_index,b=>b.result.realtime.life_index={status:'denied',ultraviolet:{index:7}},b=>b.result.realtime.life_index.ultraviolet={status:'denied',index:7}])assert.doesNotMatch((await render('noon','12:00',edit)).text,/紫外线/);
+ for(const edit of [b=>delete b.result.realtime.life_index,b=>b.result.realtime.life_index={status:'denied',ultraviolet:{index:7}},b=>b.result.realtime.life_index.ultraviolet={status:'denied',index:7}])assert.doesNotMatch((await render('noon','12:00',edit)).text,/紫外线强/);
 });
 test('high humidity is contextual at 90 percent with rain or strong wind, not routine clutter',async()=>{
  for(const [humidity,probability,speed,show] of [[0.9,70,18,true],[0.899,70,18,false],[0.9,0,18,false],[0.9,0,39,true],[0,70,18,false],[1,70,18,true],[1.1,70,18,false],[null,70,18,false],['0.95',70,18,false]]){
   const r=await render('evening','17:00',b=>{b.result.realtime.humidity=humidity;b.result.realtime.wind={speed,direction:225};b.result.hourly.precipitation.forEach(x=>x.probability=probability);});
-  if(show)assert.match(r.text,/高湿\d+%/);else assert.doesNotMatch(r.text,/高湿|湿度/);
+  if(show)assert.match(r.text,/高湿\d+%/);else assert.doesNotMatch(r.text,/高湿/);
  }
 });
 test('display remains layered compact warning-first and observation-unknown without extra APIs or night changes',async()=>{
